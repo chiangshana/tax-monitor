@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 from pathlib import Path
+import tempfile
 
 import requests
 from bs4 import BeautifulSoup
@@ -14,6 +15,9 @@ from services.storage_service import StorageService
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 UPLOAD_DIR = BASE_DIR / "data" / "uploads"
+FALLBACK_UPLOAD_DIR = BASE_DIR / "data" / "upload_files"
+SECONDARY_UPLOAD_DIR = BASE_DIR / "upload_files"
+TEMP_UPLOAD_DIR = Path(tempfile.gettempdir()) / "tax_monitor_uploads"
 
 
 class DocumentService:
@@ -24,8 +28,7 @@ class DocumentService:
 
     async def process_upload(self, file: UploadFile):
         raw_bytes = await file.read()
-        file_path = UPLOAD_DIR / file.filename
-        file_path.write_bytes(raw_bytes)
+        file_path = self._write_upload_bytes(file.filename, raw_bytes)
 
         if file.filename.lower().endswith(".pdf"):
             raw_text = self._extract_text_from_pdf(file_path)
@@ -58,12 +61,21 @@ class DocumentService:
                 "language": document["language"],
                 "country": document.get("country"),
                 "industry": document.get("industry"),
-                "created_at": document["created_at"]
+                "published_date": document.get("published_date"),
+                "created_at": document["created_at"],
+                "updated_at": document.get("updated_at")
             },
             "extracted_keywords": keywords
         }
 
-    async def process_url(self, url: str, country: str = None, industry: str = None, source_name: str = "web"):
+    async def process_url(
+        self,
+        url: str,
+        country: str = None,
+        industry: str = None,
+        source_name: str = "web",
+        published_date: str = None
+    ):
         title, raw_text = self._fetch_web_text(url)
         language = self.language_service.detect_language(raw_text)
 
@@ -75,7 +87,8 @@ class DocumentService:
             raw_text=raw_text,
             language=language,
             country=country,
-            industry=industry
+            industry=industry,
+            published_date=published_date
         )
         self.storage_service.save_document(document)
         self.keyword_service.train_from_database()
@@ -94,16 +107,21 @@ class DocumentService:
                 "language": document["language"],
                 "country": document.get("country"),
                 "industry": document.get("industry"),
-                "created_at": document["created_at"]
+                "published_date": document.get("published_date"),
+                "created_at": document["created_at"],
+                "updated_at": document.get("updated_at")
             },
             "extracted_keywords": keywords
         }
 
-    def list_documents(self):
-        return self.storage_service.list_documents()
+    def list_documents(self, **filters):
+        return self.storage_service.list_documents(**filters)
 
     def get_document(self, doc_id: str):
         return self.storage_service.get_document(doc_id)
+
+    def update_document(self, doc_id: str, updates: dict):
+        return self.storage_service.update_document(doc_id, updates)
 
     def _build_document(
         self,
@@ -115,8 +133,10 @@ class DocumentService:
         file_name: str = None,
         url: str = None,
         country: str = None,
-        industry: str = None
+        industry: str = None,
+        published_date: str = None
     ):
+        timestamp = datetime.now().isoformat(timespec="seconds")
         return {
             "doc_id": str(uuid.uuid4()),
             "title": title,
@@ -128,8 +148,54 @@ class DocumentService:
             "language": language,
             "country": country,
             "industry": industry,
-            "created_at": datetime.now().isoformat(timespec="seconds")
+            "published_date": published_date,
+            "created_at": timestamp,
+            "updated_at": timestamp
         }
+
+    def _get_upload_dir(self) -> Path:
+        if UPLOAD_DIR.exists() and UPLOAD_DIR.is_file():
+            for candidate in (FALLBACK_UPLOAD_DIR, SECONDARY_UPLOAD_DIR, TEMP_UPLOAD_DIR):
+                try:
+                    candidate.mkdir(parents=True, exist_ok=True)
+                    return candidate
+                except PermissionError:
+                    continue
+            raise PermissionError("No writable upload directory is available")
+
+        try:
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            return UPLOAD_DIR
+        except PermissionError:
+            for candidate in (SECONDARY_UPLOAD_DIR, TEMP_UPLOAD_DIR):
+                try:
+                    candidate.mkdir(parents=True, exist_ok=True)
+                    return candidate
+                except PermissionError:
+                    continue
+            raise PermissionError("No writable upload directory is available")
+
+    def _write_upload_bytes(self, filename: str, raw_bytes: bytes) -> Path:
+        candidate_dirs = []
+        try:
+            candidate_dirs.append(self._get_upload_dir())
+        except PermissionError:
+            pass
+        candidate_dirs.extend([SECONDARY_UPLOAD_DIR, TEMP_UPLOAD_DIR])
+
+        checked = set()
+        for directory in candidate_dirs:
+            if directory in checked:
+                continue
+            checked.add(directory)
+            try:
+                directory.mkdir(parents=True, exist_ok=True)
+                file_path = directory / filename
+                file_path.write_bytes(raw_bytes)
+                return file_path
+            except PermissionError:
+                continue
+        raise PermissionError("No writable upload file path is available")
 
     def _extract_text_from_pdf(self, file_path: Path) -> str:
         reader = PdfReader(str(file_path))

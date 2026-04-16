@@ -1,0 +1,219 @@
+{
+  "name": "Tax Monitor - Gmail High Risk Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "gmail-cron",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { keywords: ['tax reform', 'penalty', 'audit', 'compliance'], user_prompt: 'detect high-risk tax updates and send a Gmail alert', mode: 'auto', date_range: '7d', max_results: 5, country: 'TW', industry: 'technology', source_name: 'google_news_rss', auto_ingest: true, alert_email_to: 'your-team@gmail.com', gmail_sender: 'your-sender@gmail.com' } }];"
+      },
+      "id": "gmail-prepare-search",
+      "name": "Prepare Search Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        490,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/document/search",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { keywords: $json.keywords, user_prompt: $json.user_prompt, mode: $json.mode, date_range: $json.date_range, max_results: $json.max_results, country: $json.country, industry: $json.industry, source_name: $json.source_name, auto_ingest: $json.auto_ingest } }}"
+      },
+      "id": "gmail-search-api",
+      "name": "Search Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json.results || [];\nconst config = $('Prepare Search Payload').first().json;\nreturn results.filter(item => item.ingested_doc_id).map(item => ({ json: { doc_id: item.ingested_doc_id, source_url: item.url, title: item.title, alert_email_to: config.alert_email_to, gmail_sender: config.gmail_sender } }));"
+      },
+      "id": "gmail-extract",
+      "name": "Extract Doc IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1010,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "gmail-batch",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1230,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/run",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, mode: 'translate_first', target_language: 'zh', use_llm: true, provider: 'ollama', model_name: 'qwen3:8b', user_prompt: 'prepare a concise Gmail alert summary with effective date, filing risk, and penalties' } }}"
+      },
+      "id": "gmail-analyze",
+      "name": "Analyze Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1470,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.risk_level }}",
+              "operation": "equal",
+              "value2": "High"
+            }
+          ]
+        }
+      },
+      "id": "gmail-if",
+      "name": "If High Risk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/report",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, output_format: 'slides', provider: 'ollama', model_name: 'qwen3:8b', target_language: 'zh', user_prompt: 'prepare a short executive Gmail alert version' } }}"
+      },
+      "id": "gmail-report",
+      "name": "Generate Alert Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1930,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const source = $('Extract Doc IDs').first().json;\nconst title = $json.title || 'Tax Monitor Alert';\nconst risk = $json.metadata?.risk_level || 'unknown';\nconst message = [`High risk tax update detected`, '', `Title: ${title}`, `Risk: ${risk}`, '', $json.content].join('\\n');\nreturn [{ json: { to: source.alert_email_to, from: source.gmail_sender, subject: `[Tax Monitor] High Risk - ${title}`, text: message } }];"
+      },
+      "id": "gmail-prepare-message",
+      "name": "Prepare Gmail Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.from }}",
+        "toEmail": "={{ $json.to }}",
+        "subject": "={{ $json.subject }}",
+        "emailType": "text",
+        "message": "={{ $json.text }}",
+        "options": {}
+      },
+      "id": "gmail-send",
+      "name": "Send Gmail SMTP",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2.1,
+      "position": [
+        2390,
+        160
+      ],
+      "credentials": {
+        "smtp": {
+          "id": "replace-with-your-smtp-credential-id",
+          "name": "Gmail SMTP"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger": {
+      "main": [[{ "node": "Prepare Search Payload", "type": "main", "index": 0 }]]
+    },
+    "Prepare Search Payload": {
+      "main": [[{ "node": "Search Documents", "type": "main", "index": 0 }]]
+    },
+    "Search Documents": {
+      "main": [[{ "node": "Extract Doc IDs", "type": "main", "index": 0 }]]
+    },
+    "Extract Doc IDs": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    },
+    "Split In Batches": {
+      "main": [[{ "node": "Analyze Document", "type": "main", "index": 0 }]]
+    },
+    "Analyze Document": {
+      "main": [[{ "node": "If High Risk", "type": "main", "index": 0 }]]
+    },
+    "If High Risk": {
+      "main": [
+        [{ "node": "Generate Alert Report", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Generate Alert Report": {
+      "main": [[{ "node": "Prepare Gmail Message", "type": "main", "index": 0 }]]
+    },
+    "Prepare Gmail Message": {
+      "main": [[{ "node": "Send Gmail SMTP", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "tax-monitor-gmail-alert-v1",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "id": "tax-monitor-gmail-alert-workflow"
+}

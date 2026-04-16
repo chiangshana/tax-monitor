@@ -1,15 +1,18 @@
-import json
-import requests
+from services.llm_service import LLMService
 
 
 class TranslatorService:
+    def __init__(self):
+        self.llm_service = LLMService()
+
     async def translate_text(
         self,
         text: str,
         source_language: str,
         target_language: str,
         use_llm: bool = False,
-        model_name: str = "qwen2.5:7b"
+        provider: str = "ollama",
+        model_name: str = "qwen3:8b"
     ) -> str:
         if source_language == target_language:
             return text
@@ -29,18 +32,13 @@ class TranslatorService:
 原文：
 {text[:12000]}
 """
-        try:
-            response = requests.post(
-                "http://localhost:11434/api/generate",
-                json={"model": model_name, "prompt": prompt, "stream": False},
-                timeout=90
-            )
-            response.raise_for_status()
-            content = response.json().get("response", "").strip()
-            data = json.loads(content)
-            return data.get("translated_text", self._fallback_translate(text, source_language, target_language))
-        except Exception:
-            return self._fallback_translate(text, source_language, target_language)
+        data = self.llm_service.generate_json(
+            prompt=prompt,
+            schema_hint={"translated_text": self._fallback_translate(text, source_language, target_language)},
+            provider=provider,
+            model_name=model_name
+        )
+        return data.get("translated_text", self._fallback_translate(text, source_language, target_language))
 
     def _fallback_translate(self, text: str, source_language: str, target_language: str) -> str:
         header = f"[Translation preview only | {source_language} -> {target_language}]\n"

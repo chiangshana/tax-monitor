@@ -1,0 +1,254 @@
+{
+  "name": "Tax Monitor - Search Analyze Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "cron-node",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{\n  json: {\n    keywords: ['tax reform', 'filing obligation'],\n    user_prompt: 'focus on APAC and cross-border tax updates',\n    mode: 'auto',\n    date_range: '7d',\n    max_results: 5,\n    country: 'TW',\n    industry: 'technology',\n    source_name: 'google_news_rss',\n    auto_ingest: true\n  }\n}];"
+      },
+      "id": "prepare-search",
+      "name": "Prepare Search Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/document/search",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}"
+      },
+      "id": "search-api",
+      "name": "Search Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        760,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json.results || [];\nreturn results\n  .filter(item => item.ingested_doc_id)\n  .map(item => ({ json: { doc_id: item.ingested_doc_id, source_url: item.url, title: item.title } }));"
+      },
+      "id": "extract-docids",
+      "name": "Extract Doc IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1010,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-in-batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1230,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/run",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, mode: 'translate_first', target_language: 'zh', use_llm: true, provider: 'ollama', model_name: 'qwen3:8b', user_prompt: 'highlight filing risk and effective date' } }}"
+      },
+      "id": "analyze-api",
+      "name": "Analyze Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1470,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.risk_level }}",
+              "operation": "equal",
+              "value2": "High"
+            }
+          ]
+        }
+      },
+      "id": "if-high-risk",
+      "name": "If High Risk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/report",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, output_format: 'obsidian', provider: 'ollama', model_name: 'qwen3:8b', target_language: 'zh', user_prompt: 'prepare a management-ready risk summary' } }}"
+      },
+      "id": "report-api",
+      "name": "Generate Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1930,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { message: 'High risk tax update detected', title: $json.title, content: $json.content, metadata: $json.metadata } }];"
+      },
+      "id": "prepare-output",
+      "name": "Prepare Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        160
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger": {
+      "main": [
+        [
+          {
+            "node": "Prepare Search Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Search Payload": {
+      "main": [
+        [
+          {
+            "node": "Search Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Documents": {
+      "main": [
+        [
+          {
+            "node": "Extract Doc IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Doc IDs": {
+      "main": [
+        [
+          {
+            "node": "Split In Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          {
+            "node": "Analyze Document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Analyze Document": {
+      "main": [
+        [
+          {
+            "node": "If High Risk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If High Risk": {
+      "main": [
+        [
+          {
+            "node": "Generate Report",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Generate Report": {
+      "main": [
+        [
+          {
+            "node": "Prepare Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "tax-monitor-workflow-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "tax-monitor-workflow"
+}

@@ -1,25 +1,5 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Virtual environment
-venv/
-.env/
-
-# Database
-*.db
-
-# Upload files
-data/uploads/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# VS Code
-.vscode/
-
-# Logs
-*.log
+__pycache__/ 
+*.pyc 
+.env 
+venv/ 
+.venv/ 

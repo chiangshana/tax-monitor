@@ -68,6 +68,16 @@ async def list_documents(request: DocumentListRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/keyword-profiles", response_model=list[KeywordProfileResponse], summary="列出關鍵字設定檔")
+async def list_keyword_profiles():
+    try:
+        profiles = keyword_service.list_keyword_profiles()
+        return [KeywordProfileResponse(**profile) for profile in profiles]
+    except Exception as e:
+        print(f"[ERROR] /api/document/keyword-profiles: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{doc_id}", response_model=DocumentDetail, summary="查看單篇文件詳情")
 async def get_document_detail(doc_id: str):
     try:
@@ -109,7 +119,11 @@ async def search_documents(request: SearchRequest):
             start_date=request.start_date,
             end_date=request.end_date,
             max_results=request.max_results,
-            candidate_urls=request.candidate_urls
+            candidate_urls=request.candidate_urls,
+            source_name=request.source_name,
+            use_ai_query_expansion=request.use_ai_query_expansion,
+            provider=request.provider,
+            model_name=request.model_name
         )
 
         normalized_results = []
@@ -168,16 +182,6 @@ async def train_keyword_profile(request: KeywordTrainRequest):
         return KeywordProfileResponse(**profile)
     except Exception as e:
         print(f"[ERROR] /api/document/train-keyword-profile: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/keyword-profiles", response_model=list[KeywordProfileResponse], summary="列出關鍵字設定檔")
-async def list_keyword_profiles():
-    try:
-        profiles = keyword_service.list_keyword_profiles()
-        return [KeywordProfileResponse(**profile) for profile in profiles]
-    except Exception as e:
-        print(f"[ERROR] /api/document/keyword-profiles: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

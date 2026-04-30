@@ -31,6 +31,21 @@ class LLMService:
 
         return fallback
 
+    def generate_text(
+        self,
+        prompt: str,
+        provider: str = "ollama",
+        model_name: str = "qwen3:8b"
+    ) -> str:
+        try:
+            return self._generate_text(
+                prompt=prompt,
+                provider=provider,
+                model_name=model_name
+            ).strip()
+        except Exception:
+            return ""
+
     def _generate_text(self, prompt: str, provider: str, model_name: str) -> str:
         provider = provider.lower()
         if provider == "ollama":

@@ -6,8 +6,8 @@ import tempfile
 import requests
 from bs4 import BeautifulSoup
 from fastapi import UploadFile
-from pypdf import PdfReader
 
+from services.document_parser_service import DocumentParserService
 from services.keyword_service import KeywordService
 from services.language_service import LanguageService
 from services.storage_service import StorageService
@@ -25,15 +25,13 @@ class DocumentService:
         self.storage_service = StorageService()
         self.keyword_service = KeywordService()
         self.language_service = LanguageService()
+        self.parser_service = DocumentParserService()
 
     async def process_upload(self, file: UploadFile):
         raw_bytes = await file.read()
         file_path = self._write_upload_bytes(file.filename, raw_bytes)
 
-        if file.filename.lower().endswith(".pdf"):
-            raw_text = self._extract_text_from_pdf(file_path)
-        else:
-            raw_text = raw_bytes.decode("utf-8", errors="ignore")
+        raw_text = self.parser_service.parse_file(file_path)
 
         language = self.language_service.detect_language(raw_text)
         document = self._build_document(
@@ -76,12 +74,12 @@ class DocumentService:
         source_name: str = "web",
         published_date: str = None
     ):
-        title, raw_text = self._fetch_web_text(url)
+        title, raw_text, detected_source_type = self._fetch_url_content(url)
         language = self.language_service.detect_language(raw_text)
 
         document = self._build_document(
             title=title,
-            source_type="web",
+            source_type=detected_source_type,
             source_name=source_name,
             url=url,
             raw_text=raw_text,
@@ -197,17 +195,16 @@ class DocumentService:
                 continue
         raise PermissionError("No writable upload file path is available")
 
-    def _extract_text_from_pdf(self, file_path: Path) -> str:
-        reader = PdfReader(str(file_path))
-        texts = []
-        for page in reader.pages:
-            texts.append(page.extract_text() or "")
-        return "\n".join(texts)
-
-    def _fetch_web_text(self, url: str):
+    def _fetch_url_content(self, url: str):
         headers = {"User-Agent": "Mozilla/5.0"}
         response = requests.get(url, timeout=20, headers=headers)
         response.raise_for_status()
+
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if url.lower().endswith(".pdf") or "application/pdf" in content_type:
+            title = self._infer_file_name_from_url(url)
+            raw_text = self.parser_service.parse_bytes(response.content, title)
+            return title, raw_text, "pdf"
 
         soup = BeautifulSoup(response.text, "html.parser")
         title = soup.title.text.strip() if soup.title else url
@@ -216,4 +213,8 @@ class DocumentService:
             tag.decompose()
 
         text = soup.get_text(separator="\n")
-        return title, text
+        return title, text, "web"
+
+    def _infer_file_name_from_url(self, url: str) -> str:
+        candidate = url.rstrip("/").split("/")[-1]
+        return candidate or "downloaded_document.pdf"

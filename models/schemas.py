@@ -113,12 +113,15 @@ class SearchRequest(BaseModel):
     date_range: str = Field(default="1m", pattern="^(7d|1m|3m|6m|1y|custom)$")
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    max_results: int = Field(default=10, ge=1, le=30)
+    max_results: int = Field(default=10, ge=1, le=100)
     country: Optional[str] = None
     industry: Optional[str] = None
     source_name: str = "google_news_rss"
     candidate_urls: List[str] = Field(default_factory=list)
     auto_ingest: bool = True
+    use_ai_query_expansion: bool = True
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    model_name: str = "qwen3:8b"
 
 
 class SearchResultItem(BaseModel):
@@ -128,6 +131,9 @@ class SearchResultItem(BaseModel):
     source: str
     published_at: Optional[str] = None
     relevance_score: float
+    domain: Optional[str] = None
+    result_type: Optional[str] = None
+    match_reasons: List[str] = Field(default_factory=list)
     ingested_doc_id: Optional[str] = None
 
 
@@ -162,7 +168,7 @@ class SlideSection(BaseModel):
 
 class ReportRequest(BaseModel):
     doc_id: str = Field(..., min_length=1)
-    output_format: str = Field(default="obsidian", pattern="^(obsidian|slides)$")
+    output_format: str = Field(default="obsidian", pattern="^(obsidian|slides|pptx)$")
     provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
     model_name: str = "qwen3:8b"
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
@@ -175,6 +181,7 @@ class ReportResponse(BaseModel):
     title: str
     content: str
     slide_outline: List[SlideSection] = Field(default_factory=list)
+    file_path: Optional[str] = None
     metadata: Dict[str, str] = Field(default_factory=dict)
 
 
@@ -196,3 +203,99 @@ class EvaluationResponse(BaseModel):
     risk_level_rule: str
     risk_level_llm: str
     notes: List[str] = Field(default_factory=list)
+
+
+class PipelineRunRequest(BaseModel):
+    keywords: List[str] = Field(..., min_length=1)
+    user_prompt: Optional[str] = None
+    mode: str = Field(default="auto", pattern="^(auto|manual)$")
+    date_range: str = Field(default="1m", pattern="^(7d|1m|3m|6m|1y|custom)$")
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    max_results: int = Field(default=10, ge=1, le=100)
+    country: Optional[str] = None
+    industry: Optional[str] = None
+    source_name: str = "google_news_rss"
+    candidate_urls: List[str] = Field(default_factory=list)
+    use_ai_query_expansion: bool = True
+    target_language: str = Field(default="zh", pattern="^(zh|en)$")
+    analysis_mode: str = Field(default="translate_first", pattern="^(translate_first|analyze_first)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    model_name: str = "qwen3:8b"
+    report_format: str = Field(default="pptx", pattern="^(obsidian|slides|pptx)$")
+    max_documents_to_process: int = Field(default=3, ge=1, le=10)
+    high_risk_only: bool = False
+
+
+class PipelineDocumentResult(BaseModel):
+    doc_id: str
+    title: str
+    source_url: Optional[str] = None
+    risk_level: str
+    risk_tags: List[str] = Field(default_factory=list)
+    report_format: str
+    report_file_path: Optional[str] = None
+
+
+class PipelineRunResponse(BaseModel):
+    query: str
+    searched_result_count: int
+    ingested_result_count: int
+    processed_count: int
+    report_format: str
+    documents: List[PipelineDocumentResult] = Field(default_factory=list)
+
+
+class SearchTrainRequest(BaseModel):
+    keywords: List[str] = Field(..., min_length=1)
+    user_prompt: Optional[str] = None
+    mode: str = Field(default="auto", pattern="^(auto|manual)$")
+    date_range: str = Field(default="1m", pattern="^(7d|1m|3m|6m|1y|custom)$")
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+    max_results: int = Field(default=10, ge=1, le=100)
+    country: Optional[str] = None
+    industry: Optional[str] = None
+    source_name: str = "google_news_rss"
+    candidate_urls: List[str] = Field(default_factory=list)
+    auto_ingest: bool = True
+    use_ai_query_expansion: bool = True
+    generate_pptx: bool = True
+    target_language: str = Field(default="zh", pattern="^(zh|en)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    model_name: str = "qwen3:8b"
+    max_documents_to_process: int = Field(default=3, ge=1, le=10)
+    high_risk_only: bool = False
+
+
+class SearchTrainDocumentResult(BaseModel):
+    doc_id: str
+    title: str
+    url: Optional[str] = None
+    published_at: Optional[str] = None
+    extracted_keywords: List[str] = Field(default_factory=list)
+    risk_level: Optional[str] = None
+    risk_tags: List[str] = Field(default_factory=list)
+    pptx_file_path: Optional[str] = None
+
+
+class SearchTrainSearchResult(BaseModel):
+    title: str
+    url: str
+    source: str
+    published_at: Optional[str] = None
+    relevance_score: float
+    domain: Optional[str] = None
+    result_type: Optional[str] = None
+    match_reasons: List[str] = Field(default_factory=list)
+
+
+class SearchTrainResponse(BaseModel):
+    query: str
+    normalized_keywords: List[str] = Field(default_factory=list)
+    searched_result_count: int
+    ingested_result_count: int
+    generated_report_count: int
+    trained_keyword_model: Dict[str, str | int]
+    search_results: List[SearchTrainSearchResult] = Field(default_factory=list)
+    documents: List[SearchTrainDocumentResult] = Field(default_factory=list)

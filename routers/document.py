@@ -1,4 +1,9 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+import csv
+import io
+from datetime import datetime
+
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from models.schemas import (
     DocumentDetail,
     DocumentListRequest,
@@ -11,17 +16,106 @@ from models.schemas import (
     KeywordTrainResponse,
     KeywordTrainRequest,
     KeywordProfileResponse,
-    KeywordPreviewResponse
+    KeywordPreviewResponse,
+    FtsSearchRequest,
+    FtsSearchResponse,
 )
 from services.document_service import DocumentService
 from services.keyword_service import KeywordService
 from services.search_service import SearchService
+from services.storage_service import StorageService
 
 
 router = APIRouter()
 document_service = DocumentService()
 keyword_service = KeywordService()
 search_service = SearchService()
+storage_service = StorageService()
+
+
+EXPORT_COLUMNS = [
+    "doc_id",
+    "title",
+    "source_type",
+    "source_name",
+    "language",
+    "country",
+    "industry",
+    "published_date",
+    "created_at",
+    "updated_at",
+    "url",
+]
+
+
+@router.get("/export", summary="匯出已匯入文件為 CSV / XLSX")
+async def export_documents(
+    format: str = Query(default="csv", pattern="^(csv|xlsx)$"),
+    keyword: str = Query(default=None),
+    country: str = Query(default=None),
+    industry: str = Query(default=None),
+    language: str = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+):
+    try:
+        listing = document_service.list_documents(
+            page=1,
+            page_size=limit,
+            country=country,
+            industry=industry,
+            language=language,
+            keyword=keyword,
+        )
+        documents = listing.get("documents", []) if isinstance(listing, dict) else []
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if format == "csv":
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(EXPORT_COLUMNS)
+        for doc in documents:
+            writer.writerow([doc.get(col) or "" for col in EXPORT_COLUMNS])
+        buffer.seek(0)
+        return StreamingResponse(
+            iter([buffer.getvalue().encode("utf-8-sig")]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename=tax_monitor_documents_{timestamp}.csv"},
+        )
+
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        raise HTTPException(
+            status_code=503,
+            detail="XLSX export requires openpyxl. Install with: pip install openpyxl",
+        )
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "documents"
+    sheet.append(EXPORT_COLUMNS)
+    for doc in documents:
+        sheet.append([doc.get(col) or "" for col in EXPORT_COLUMNS])
+    binary_buffer = io.BytesIO()
+    workbook.save(binary_buffer)
+    binary_buffer.seek(0)
+    return StreamingResponse(
+        iter([binary_buffer.getvalue()]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename=tax_monitor_documents_{timestamp}.xlsx"},
+    )
+
+
+@router.post("/fts-search", response_model=FtsSearchResponse, summary="對已匯入文件執行全文檢索（FTS5）")
+async def fts_search_documents(request: FtsSearchRequest):
+    try:
+        hits = storage_service.fts_search_documents(query=request.query, limit=request.limit)
+        return FtsSearchResponse(query=request.query, total=len(hits), hits=hits)
+    except Exception as e:
+        print(f"[ERROR] /api/document/fts-search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/upload", response_model=UploadResponse, summary="上傳文件")

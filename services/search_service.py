@@ -1,19 +1,38 @@
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 import base64
+import itertools
 import re
-from typing import Dict, List
+import threading
+import time
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 import xml.etree.ElementTree as ET
 
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+
+try:
+    from urllib3.util.retry import Retry
+except Exception:
+    Retry = None
 
 from services.llm_service import LLMService
 
 
 class SearchService:
     SEARCH_TIMEOUT_SECONDS = 8
+    DEEP_FETCH_TIMEOUT_SECONDS = 12
+    CACHE_TTL_SECONDS = 600
+    CACHE_MAX_ENTRIES = 256
+    POLITE_UA_POOL = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36",
+    )
+    SEC_USER_AGENT = "Tax Monitor Research Bot acc.capstone.115@gmail.com"
 
     LOW_SIGNAL_DOMAINS = {
         "www.bing.com",
@@ -222,26 +241,78 @@ class SearchService:
         "kpmg.com",
         "deloitte.com",
         "pwc.com",
+        "bdo.global",
+        "grantthornton.global",
         "ibfd.org",
         "taxfoundation.org",
+        "tax.thomsonreuters.com",
+        "internationaltaxreview.com",
         "irs.gov",
+        "treasury.gov",
         "ec.europa.eu",
+        "eur-lex.europa.eu",
+        "taxation-customs.ec.europa.eu",
         "gov.uk",
-        "moj.gov.tw",
-        "dot.gov.tw",
+        "hmrc.gov.uk",
+        "bundesfinanzministerium.de",
+        "impots.gouv.fr",
+        "agenziaentrate.gov.it",
+        "minfin.gov.ua",
+        "skatteverket.se",
+        "skatteetaten.no",
         "mof.gov.tw",
+        "dot.gov.tw",
+        "moj.gov.tw",
+        "law.moj.gov.tw",
+        "ntbt.gov.tw",
+        "ntbk.gov.tw",
+        "ntbsa.gov.tw",
+        "tax.gov.tw",
+        "fsc.gov.tw",
+        "nta.go.jp",
+        "mof.go.jp",
+        "nts.go.kr",
+        "moef.go.kr",
+        "iras.gov.sg",
+        "ird.gov.hk",
+        "chinatax.gov.cn",
+        "mof.gov.cn",
+        "incometax.gov.in",
+        "gst.gov.in",
+        "ato.gov.au",
+        "ird.govt.nz",
+        "sars.gov.za",
+        "canada.ca",
+        "sat.gob.mx",
+        "rfb.gov.br",
+        "afip.gob.ar",
     ]
 
     DISCLOSURE_DOMAINS = [
         "twse.com.tw",
         "mops.twse.com.tw",
         "mopsov.twse.com.tw",
+        "tpex.org.tw",
         "annualreports.com",
         "marketscreener.com",
         "sec.gov",
+        "efts.sec.gov",
         "reuters.com",
         "stockanalysis.com",
         "companiesmarketcap.com",
+        "jpx.co.jp",
+        "release.tdnet.info",
+        "disclosure2.edinet-fsa.go.jp",
+        "edinet-fsa.go.jp",
+        "dart.fss.or.kr",
+        "hkexnews.hk",
+        "krx.co.kr",
+        "sgx.com",
+        "asx.com.au",
+        "bseindia.com",
+        "nseindia.com",
+        "sse.com.cn",
+        "szse.cn",
     ]
 
     TAX_KEYPHRASES = [
@@ -484,6 +555,204 @@ class SearchService:
         "受控外國公司 影響",
     ]
 
+    AUDIT_SAMPLING_TERMS = [
+        "tax audit selection",
+        "tax audit case selection",
+        "audit case selection criteria",
+        "risk-based audit selection",
+        "risk-based audit",
+        "tax authority sampling",
+        "audit sampling risk",
+        "high-risk taxpayer list",
+        "tax compliance risk scoring",
+        "transfer pricing case selection",
+        "controlled transaction selection",
+        "MAP request",
+        "mutual agreement procedure",
+        "advance pricing arrangement",
+        "advance ruling request",
+        "private letter ruling",
+        "tax demand letter",
+        "deficiency notice",
+        "notice of audit",
+        "tax reassessment notice",
+        "back tax demand",
+        "稅務查核抽樣",
+        "稅務抽核",
+        "選案查核",
+        "風險選案",
+        "重點查核",
+        "查核重點",
+        "查核選案",
+        "高風險納稅義務人",
+        "高風險納稅人",
+        "高風險案件",
+        "稅務風險評估",
+        "稅務風險導向查核",
+        "移轉訂價選案",
+        "受控交易選案",
+        "預先核釋",
+        "預先訂價協議",
+        "稅務裁罰書",
+        "繳款書",
+        "補徵稅款",
+        "補徵核定通知書",
+        "滯納金",
+        "罰鍰",
+        "申請相互協議",
+        "税務調査対象",
+        "抽出調査",
+        "重点調査",
+        "リスクベース調査",
+        "更正処分",
+        "国税庁 査察",
+        "세무조사 선정",
+        "고위험 납세자",
+        "위험기반 세무조사",
+        "추징세액",
+        "신고불성실 가산세",
+        "稅務稽查抽查",
+        "随机抽查",
+        "重点稽查",
+    ]
+
+    TAX_AUDIT_THESAURUS = {
+        "audit": [
+            "audit", "tax audit", "audit examination", "review", "examination",
+            "investigation", "tax investigation", "probe", "tax probe", "inspection",
+            "查核", "稅務查核", "稽查", "稅務稽查", "調查", "稅務調查",
+            "查稅", "国税庁 査察", "税務調査", "세무조사", "审查", "稽查抽查",
+        ],
+        "sampling": [
+            "audit sampling", "sample selection", "case selection", "risk-based selection",
+            "risk-based audit", "high-risk taxpayer", "compliance risk scoring",
+            "抽核", "選案", "選案查核", "風險選案", "重點查核", "高風險納稅人",
+            "抽出調査", "リスクベース調査", "고위험 납세자", "위험기반 세무조사",
+            "随机抽查", "重点稽查",
+        ],
+        "penalty": [
+            "penalty", "fine", "surcharge", "back tax", "additional tax",
+            "deficiency notice", "demand letter", "reassessment notice",
+            "罰鍰", "罰款", "滯納金", "滯報金", "怠報金", "補徵稅款",
+            "補稅", "繳款書", "稅務裁罰書", "更正処分", "추징세액",
+            "신고불성실 가산세", "罰則", "加算税",
+        ],
+        "transfer_pricing": [
+            "transfer pricing", "TP audit", "arm's length principle", "comparables",
+            "intercompany transactions", "controlled transactions", "BEPS Action 8",
+            "BEPS Action 9", "BEPS Action 10", "OECD transfer pricing guidelines",
+            "country-by-country report", "CbC report", "master file", "local file",
+            "移轉訂價", "移轉訂價查核", "受控交易", "關聯交易",
+            "国別報告書", "ローカルファイル", "マスターファイル",
+            "이전가격", "특수관계자 거래",
+        ],
+        "pillar_two": [
+            "Pillar Two", "Pillar 2", "GloBE", "global minimum tax", "GMT",
+            "QDMTT", "qualified domestic minimum top-up tax", "IIR", "income inclusion rule",
+            "UTPR", "undertaxed payments rule", "GILTI",
+            "全球最低稅負", "支柱二", "合格國內最低補充稅",
+            "グローバルミニマム課税", "글로벌 최저한세",
+        ],
+        "cfc": [
+            "CFC", "controlled foreign company", "controlled foreign corporation",
+            "subpart F", "anti-deferral rules",
+            "受控外國公司", "CFC 制度", "受控外國企業所得",
+            "外国子会社合算税制", "타국 자회사 합산과세",
+        ],
+        "permanent_establishment": [
+            "permanent establishment", "PE risk", "PE assessment",
+            "fixed place of business", "agency PE", "service PE",
+            "常設機構", "PE 風險",
+            "恒久的施設", "고정사업장",
+        ],
+        "withholding_tax": [
+            "withholding tax", "WHT", "withholding obligation",
+            "扣繳稅", "扣繳義務", "預扣稅款",
+            "源泉徴収税", "원천징수",
+        ],
+        "tariff": [
+            "tariff", "customs duty", "import duty", "export duty",
+            "anti-dumping", "countervailing", "Section 301", "Section 232",
+            "關稅", "進口稅", "海關估價", "反傾銷稅", "反補貼稅",
+            "関税", "관세",
+        ],
+        "vat_gst": [
+            "VAT", "value added tax", "GST", "goods and services tax",
+            "consumption tax", "sales tax", "indirect tax",
+            "加值稅", "加值營業稅", "營業稅", "消費稅",
+            "消費税", "부가가치세",
+        ],
+    }
+
+    JURISDICTION_PROFILE = {
+        "tw": {
+            "languages": ["zh-TW", "en"],
+            "audit_terms": ["國稅局查核", "選案查核", "查核重點", "罰鍰", "補徵稅款"],
+            "authority_aliases": ["國稅局", "財政部", "MOF", "MOJ"],
+            "filing_terms": ["年度結算申報", "暫繳申報", "扣繳憑單"],
+        },
+        "jp": {
+            "languages": ["ja", "en"],
+            "audit_terms": ["税務調査", "国税庁 査察", "更正処分", "加算税"],
+            "authority_aliases": ["国税庁", "NTA", "国税局", "税務署"],
+            "filing_terms": ["法人税申告", "確定申告", "源泉徴収"],
+        },
+        "kr": {
+            "languages": ["ko", "en"],
+            "audit_terms": ["세무조사", "추징세액", "신고불성실 가산세"],
+            "authority_aliases": ["국세청", "NTS", "세무서"],
+            "filing_terms": ["법인세 신고", "원천징수"],
+        },
+        "cn": {
+            "languages": ["zh-CN", "en"],
+            "audit_terms": ["税务稽查", "税务检查", "重点稽查", "随机抽查", "补缴税款"],
+            "authority_aliases": ["国家税务总局", "税务局", "SAT"],
+            "filing_terms": ["企业所得税汇算清缴", "增值税申报"],
+        },
+        "hk": {
+            "languages": ["en", "zh-HK"],
+            "audit_terms": ["IRD audit", "field audit", "investigation"],
+            "authority_aliases": ["Inland Revenue Department", "IRD", "稅務局"],
+            "filing_terms": ["profits tax return", "BIR51"],
+        },
+        "sg": {
+            "languages": ["en"],
+            "audit_terms": ["IRAS audit", "tax investigation", "risk-based audit"],
+            "authority_aliases": ["IRAS", "Inland Revenue Authority of Singapore"],
+            "filing_terms": ["corporate income tax filing", "Form C-S"],
+        },
+        "us": {
+            "languages": ["en"],
+            "audit_terms": ["IRS audit", "examination", "deficiency notice", "Notice of Deficiency", "CDP hearing"],
+            "authority_aliases": ["IRS", "Internal Revenue Service", "Treasury"],
+            "filing_terms": ["10-K", "20-F", "Form 5471", "Form 5472", "Schedule UTP"],
+        },
+        "eu": {
+            "languages": ["en"],
+            "audit_terms": ["DAC6 disclosure", "ATAD", "anti-tax avoidance directive"],
+            "authority_aliases": ["European Commission", "DG TAXUD"],
+            "filing_terms": ["DAC6 reporting", "CESOP"],
+        },
+        "in": {
+            "languages": ["en"],
+            "audit_terms": ["GST audit", "income tax scrutiny", "GAAR", "Vivad se Vishwas"],
+            "authority_aliases": ["CBDT", "CBIC", "Income Tax Department"],
+            "filing_terms": ["Form 3CD", "Form 3CEB", "Tax Audit Report"],
+        },
+    }
+
+    JURISDICTION_HINT_PATTERNS = {
+        "tw": [r"taiwan", r"\btw\b", r"台灣", r"中華民國", r"國稅局"],
+        "jp": [r"japan", r"\bjp\b", r"日本", r"国税庁"],
+        "kr": [r"korea", r"\bkr\b", r"한국", r"국세청"],
+        "cn": [r"china", r"\bcn\b", r"中國", r"国家税务总局"],
+        "hk": [r"hong kong", r"\bhk\b", r"香港", r"稅務局"],
+        "sg": [r"singapore", r"\bsg\b", r"新加坡", r"\biras\b"],
+        "us": [r"united states", r"\bu\.s\.\b", r"\busa\b", r"american", r"sec\.gov"],
+        "eu": [r"european union", r"\beu\b", r"european commission", r"dac6", r"atad"],
+        "in": [r"india", r"\bin\b", r"印度", r"\bcbdt\b", r"\bgst\b"],
+    }
+
     TAX_NEWS_DOMAINS = [
         "reuters.com",
         "bloombergtax.com",
@@ -561,7 +830,33 @@ class SearchService:
             model_name=model_name,
             enabled=use_ai_query_expansion
         )
-        if source_name in {"all", "google_news_rss_global"}:
+
+        intent: Dict = {}
+        if use_ai_query_expansion and source_name == "deep_research":
+            try:
+                intent = self._extract_intent_with_llm(
+                    keywords=keywords,
+                    user_prompt=user_prompt,
+                    provider=provider,
+                    model_name=model_name,
+                )
+            except Exception:
+                intent = {}
+
+        if source_name == "deep_research":
+            results = self._search_deep_research(
+                query=query,
+                keywords=keywords,
+                user_prompt=user_prompt,
+                window=window,
+                max_results=max_results,
+                ai_variants=ai_variants,
+                provider=provider,
+                model_name=model_name,
+                use_intent_extraction=False,
+                precomputed_intent=intent,
+            )
+        elif source_name in {"all", "google_news_rss_global"}:
             results = self._search_google_news_rss_global(
                 query=query,
                 keywords=keywords,
@@ -581,12 +876,185 @@ class SearchService:
                 ai_variants=ai_variants,
                 source_name=source_name
         )
-        ranked = self._rank_results(results, keywords=keywords, user_prompt=user_prompt)
-        filtered = [item for item in ranked if item.get("relevance_score", 0.0) >= 1.0]
+        ranked = self._rank_results(results, keywords=keywords, user_prompt=user_prompt, intent=intent)
+        deduped = self._dedup_by_title_similarity(ranked)
+        filtered = [item for item in deduped if item.get("relevance_score", 0.0) >= 1.0]
         return filtered[:max_results]
+
+    SOURCE_HEALTH_FAIL_THRESHOLD = 3
+    PARALLEL_FETCH_WORKERS = 6
+    DOMAIN_MIN_INTERVAL_SECONDS = 0.7
+    DOMAIN_MIN_INTERVAL_OVERRIDES = {
+        "efts.sec.gov": 1.1,
+        "sec.gov": 1.1,
+        "law.moj.gov.tw": 1.0,
+        "eur-lex.europa.eu": 0.9,
+        "disclosure2.edinet-fsa.go.jp": 1.2,
+        "dart.fss.or.kr": 1.2,
+    }
+    HEAD_PRECHECK_MAX_BYTES = 25 * 1024 * 1024
 
     def __init__(self):
         self.llm_service = LLMService()
+        self._ua_cycle = itertools.cycle(self.POLITE_UA_POOL)
+        self._cache_lock = threading.Lock()
+        self._fetch_cache: Dict[Tuple[str, str], Tuple[float, requests.Response]] = {}
+        self._session = self._build_http_session()
+        self._source_stats_lock = threading.Lock()
+        self._source_stats: Dict[str, Dict[str, int]] = {}
+        self._domain_lock = threading.Lock()
+        self._domain_locks: Dict[str, threading.Lock] = {}
+        self._domain_last_request: Dict[str, float] = {}
+
+    def _build_http_session(self) -> requests.Session:
+        session = requests.Session()
+        if Retry is not None:
+            retry = Retry(
+                total=2,
+                connect=2,
+                read=1,
+                backoff_factor=0.6,
+                status_forcelist=(429, 500, 502, 503, 504),
+                allowed_methods=frozenset(["GET", "POST"]),
+                raise_on_status=False,
+            )
+            adapter = HTTPAdapter(max_retries=retry, pool_connections=16, pool_maxsize=32)
+        else:
+            adapter = HTTPAdapter(pool_connections=16, pool_maxsize=32)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        return session
+
+    def _next_user_agent(self) -> str:
+        with self._cache_lock:
+            return next(self._ua_cycle)
+
+    def _cached_request(
+        self,
+        method: str,
+        url: str,
+        *,
+        params: Optional[Dict[str, str]] = None,
+        data: Optional[Dict[str, str]] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = None,
+        use_cache: bool = True,
+    ) -> requests.Response:
+        method = method.upper()
+        cache_key = (method, self._stable_request_key(url, params, data))
+        now = time.time()
+
+        if use_cache:
+            with self._cache_lock:
+                cached = self._fetch_cache.get(cache_key)
+                if cached and now - cached[0] < self.CACHE_TTL_SECONDS:
+                    return cached[1]
+
+        merged_headers = {
+            "User-Agent": self._next_user_agent(),
+            "Accept-Language": "en-US,en;q=0.9,zh-TW;q=0.8,zh;q=0.7,ja;q=0.6",
+            "Accept-Encoding": "gzip, deflate",
+        }
+        if headers:
+            merged_headers.update(headers)
+
+        request_timeout = timeout if timeout is not None else self.SEARCH_TIMEOUT_SECONDS
+        self._respect_domain_rate_limit(url)
+        try:
+            if method == "GET":
+                response = self._session.get(url, params=params, headers=merged_headers, timeout=request_timeout)
+            else:
+                response = self._session.post(url, params=params, data=data, headers=merged_headers, timeout=request_timeout)
+        finally:
+            self._mark_domain_request(url)
+
+        response.raise_for_status()
+
+        if use_cache and response.status_code == 200:
+            with self._cache_lock:
+                if len(self._fetch_cache) >= self.CACHE_MAX_ENTRIES:
+                    oldest_key = min(self._fetch_cache.items(), key=lambda item: item[1][0])[0]
+                    self._fetch_cache.pop(oldest_key, None)
+                self._fetch_cache[cache_key] = (now, response)
+        return response
+
+    def _stable_request_key(
+        self,
+        url: str,
+        params: Optional[Dict[str, str]],
+        data: Optional[Dict[str, str]],
+    ) -> str:
+        parts = [url]
+        if params:
+            parts.append("|p=" + "&".join(f"{key}={params[key]}" for key in sorted(params)))
+        if data:
+            parts.append("|d=" + "&".join(f"{key}={data[key]}" for key in sorted(data)))
+        return "".join(parts)
+
+    def _domain_lock_for(self, domain: str) -> threading.Lock:
+        with self._domain_lock:
+            lock = self._domain_locks.get(domain)
+            if lock is None:
+                lock = threading.Lock()
+                self._domain_locks[domain] = lock
+            return lock
+
+    def _min_interval_for_domain(self, domain: str) -> float:
+        for suffix, interval in self.DOMAIN_MIN_INTERVAL_OVERRIDES.items():
+            if domain == suffix or domain.endswith("." + suffix) or domain.endswith(suffix):
+                return interval
+        return self.DOMAIN_MIN_INTERVAL_SECONDS
+
+    def _respect_domain_rate_limit(self, url: str):
+        domain = self._extract_domain(url)
+        if not domain:
+            return
+        min_interval = self._min_interval_for_domain(domain)
+        if min_interval <= 0:
+            return
+        lock = self._domain_lock_for(domain)
+        lock.acquire()
+        try:
+            last = self._domain_last_request.get(domain, 0.0)
+            wait = (last + min_interval) - time.time()
+            if wait > 0:
+                time.sleep(min(wait, 5.0))
+        finally:
+            lock.release()
+
+    def _mark_domain_request(self, url: str):
+        domain = self._extract_domain(url)
+        if not domain:
+            return
+        self._domain_last_request[domain] = time.time()
+
+    def _head_precheck(self, url: str, max_bytes: Optional[int] = None) -> bool:
+        if not url:
+            return False
+        max_bytes = max_bytes if max_bytes is not None else self.HEAD_PRECHECK_MAX_BYTES
+        self._respect_domain_rate_limit(url)
+        try:
+            response = self._session.head(
+                url,
+                allow_redirects=True,
+                timeout=self.SEARCH_TIMEOUT_SECONDS,
+                headers={"User-Agent": self._next_user_agent()},
+            )
+        except requests.RequestException:
+            self._mark_domain_request(url)
+            return True
+        finally:
+            self._mark_domain_request(url)
+
+        if response.status_code in (404, 410, 451):
+            return False
+        content_length = response.headers.get("Content-Length")
+        if content_length and content_length.isdigit() and int(content_length) > max_bytes:
+            return False
+        content_type = (response.headers.get("Content-Type") or "").lower()
+        if any(blocked in content_type for blocked in ("video/", "audio/", "image/")):
+            return False
+        return True
 
     def _candidate_limit(self, max_results: int) -> int:
         return min(120, max(25, max_results * 3))
@@ -687,6 +1155,108 @@ class SearchService:
                 return merged
         return merged
 
+    def _search_deep_research(
+        self,
+        query: str,
+        keywords: List[str],
+        user_prompt: str,
+        window: Dict[str, datetime],
+        max_results: int,
+        ai_variants: List[str],
+        provider: str = "ollama",
+        model_name: str = "qwen3:8b",
+        use_intent_extraction: bool = True,
+        precomputed_intent: Optional[Dict] = None,
+    ) -> List[Dict]:
+        merged: List[Dict] = []
+        seen_urls: set = set()
+        candidate_limit = self._candidate_limit(max_results)
+        aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
+        query_variants = self._merge_query_variants(
+            keywords=keywords,
+            user_prompt=user_prompt,
+            ai_variants=ai_variants,
+        )
+
+        intent: Dict = precomputed_intent or {}
+        if use_intent_extraction and not intent:
+            try:
+                intent = self._extract_intent_with_llm(
+                    keywords=keywords,
+                    user_prompt=user_prompt,
+                    provider=provider,
+                    model_name=model_name,
+                )
+            except Exception:
+                intent = {}
+        intent_queries: List[str] = self._build_intent_queries(intent=intent, aliases=aliases)
+
+        for item in self._build_seed_results(keywords=keywords, user_prompt=user_prompt):
+            self._append_unique_result(merged, seen_urls, item)
+
+        jurisdictions = self._detect_jurisdictions(keywords=keywords, user_prompt=user_prompt)
+
+        official_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = [
+            (self._search_company_sitemap, (aliases, max_results)),
+        ]
+        primary_query = aliases[0] if aliases else query
+        official_tasks.append((self._search_sec_edgar, (primary_query, max_results)))
+        for variant in query_variants[:2]:
+            official_tasks.append((self._search_sec_edgar, (variant, max_results)))
+        for variant in query_variants[:2]:
+            official_tasks.append((self._search_eur_lex, (variant, max_results)))
+        for variant in query_variants[:2]:
+            official_tasks.append((self._search_taiwan_law, (variant, max_results)))
+        if "jp" in jurisdictions or any(domain.endswith(".jp") for domain in self._company_domains_for_aliases(aliases)):
+            official_tasks.append((self._search_edinet_jp, (primary_query, max_results)))
+            for variant in query_variants[:2]:
+                official_tasks.append((self._search_edinet_jp, (variant, max_results)))
+        if "kr" in jurisdictions or any(domain.endswith(".kr") for domain in self._company_domains_for_aliases(aliases)):
+            official_tasks.append((self._search_dart_kr, (primary_query, max_results)))
+            for variant in query_variants[:2]:
+                official_tasks.append((self._search_dart_kr, (variant, max_results)))
+
+        if self._run_parallel_searches(official_tasks, candidate_limit, merged, seen_urls):
+            return merged
+
+        intent_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = []
+        for variant in intent_queries[:6]:
+            intent_tasks.append((self._search_duckduckgo_html, (variant, max_results)))
+            intent_tasks.append((self._search_bing_web, (variant, max_results)))
+        if self._run_parallel_searches(intent_tasks, candidate_limit, merged, seen_urls):
+            return merged
+
+        targeted_queries = self._build_official_site_queries(
+            keywords=keywords,
+            user_prompt=user_prompt,
+            query_variants=query_variants,
+        )
+        targeted_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = []
+        for targeted_query in targeted_queries[:8]:
+            targeted_tasks.append((self._search_duckduckgo_html, (targeted_query, max_results)))
+            targeted_tasks.append((self._search_bing_web, (targeted_query, max_results)))
+        if self._run_parallel_searches(targeted_tasks, candidate_limit, merged, seen_urls):
+            return merged
+
+        news_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = [
+            (self._search_google_news_rss, (variant, window, max_results)) for variant in query_variants[:4]
+        ]
+        if self._run_parallel_searches(news_tasks, candidate_limit, merged, seen_urls):
+            return merged
+
+        prf_queries = self._pseudo_relevance_feedback(
+            seed_results=merged,
+            keywords=keywords,
+            user_prompt=user_prompt,
+        )
+        prf_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = []
+        for prf_query in prf_queries[:8]:
+            prf_tasks.append((self._search_duckduckgo_html, (prf_query, max_results)))
+            prf_tasks.append((self._search_bing_web, (prf_query, max_results)))
+        self._run_parallel_searches(prf_tasks, candidate_limit, merged, seen_urls)
+
+        return merged
+
     def _search_google_news_rss_global(
         self,
         query: str,
@@ -711,6 +1281,13 @@ class SearchService:
         event_intent = self._has_tax_event_intent(keywords=keywords, user_prompt=user_prompt)
 
         if source_name == "all":
+            aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
+            for item in self._safe_search_call(self._search_company_sitemap, aliases, max(4, max_results // 4)):
+                self._append_unique_result(merged_items, seen_urls, item)
+            primary_alias = aliases[0] if aliases else query
+            for item in self._safe_search_call(self._search_sec_edgar, primary_alias, max(4, max_results // 4)):
+                self._append_unique_result(merged_items, seen_urls, item)
+
             if event_intent:
                 for event_query in tax_event_queries[:6]:
                     for item in self._safe_search_call(self._search_google_news_archive, event_query, max_results):
@@ -1517,6 +2094,325 @@ class SearchService:
             normalized.append(cleaned)
         return normalized[:36]
 
+    def _detect_jurisdictions(self, keywords: List[str], user_prompt: str = None) -> List[str]:
+        text = " ".join((keywords or []) + [user_prompt or ""]).lower()
+        detected: List[str] = []
+        for code, patterns in self.JURISDICTION_HINT_PATTERNS.items():
+            for pattern in patterns:
+                if re.search(pattern, text, flags=re.IGNORECASE):
+                    if code not in detected:
+                        detected.append(code)
+                    break
+        return detected
+
+    def _expand_with_thesaurus(
+        self,
+        keywords: List[str],
+        user_prompt: str = None,
+        max_concepts: int = 4,
+        max_terms_per_concept: int = 6,
+    ) -> List[str]:
+        text_lower = " ".join((keywords or []) + [user_prompt or ""]).lower()
+        triggered_concepts: List[str] = []
+        for concept, synonyms in self.TAX_AUDIT_THESAURUS.items():
+            if any(synonym.lower() in text_lower for synonym in synonyms):
+                triggered_concepts.append(concept)
+        if not triggered_concepts:
+            triggered_concepts = ["audit", "sampling", "penalty"]
+
+        triggered_concepts = triggered_concepts[:max_concepts]
+        aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
+        jurisdictions = self._detect_jurisdictions(keywords=keywords, user_prompt=user_prompt)
+
+        expansions: List[str] = []
+        seen: set = set()
+
+        for concept in triggered_concepts:
+            synonyms = self.TAX_AUDIT_THESAURUS.get(concept, [])[:max_terms_per_concept]
+            for synonym in synonyms:
+                for alias in aliases[:6] or [""]:
+                    query = f"{alias} {synonym}".strip() if alias else synonym
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if not cleaned or lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    expansions.append(cleaned)
+                    if len(expansions) >= 60:
+                        return expansions
+
+        for code in jurisdictions:
+            profile = self.JURISDICTION_PROFILE.get(code, {})
+            for audit_term in profile.get("audit_terms", [])[:4]:
+                for alias in aliases[:4] or [""]:
+                    query = f"{alias} {audit_term}".strip()
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if not cleaned or lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    expansions.append(cleaned)
+            for filing_term in profile.get("filing_terms", [])[:3]:
+                for alias in aliases[:3] or [""]:
+                    query = f"{alias} {filing_term}".strip()
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if not cleaned or lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    expansions.append(cleaned)
+            for authority in profile.get("authority_aliases", [])[:3]:
+                for alias in aliases[:3] or [""]:
+                    query = f"{alias} {authority}".strip()
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if not cleaned or lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    expansions.append(cleaned)
+            if len(expansions) >= 80:
+                break
+
+        for sampling_term in self.AUDIT_SAMPLING_TERMS[:24]:
+            for alias in aliases[:3] or [""]:
+                query = f"{alias} {sampling_term}".strip()
+                cleaned = " ".join(query.split())
+                lowered = cleaned.lower()
+                if not cleaned or lowered in seen:
+                    continue
+                seen.add(lowered)
+                expansions.append(cleaned)
+                if len(expansions) >= 100:
+                    return expansions
+
+        return expansions
+
+    def _extract_intent_with_llm(
+        self,
+        keywords: List[str],
+        user_prompt: str = None,
+        provider: str = "ollama",
+        model_name: str = "qwen3:8b",
+    ) -> Dict:
+        prompt = f"""
+You are a tax-research search planner. Read the user's keywords and intent, then return JSON only:
+{{
+  "entities": ["primary company / group / subsidiary names, English + local names if known"],
+  "jurisdictions": ["ISO 3166-1 alpha-2 country codes most relevant, e.g. TW, JP, KR, CN, HK, SG, US, EU, IN"],
+  "time_period": "free-form, e.g. FY2024, last 12 months, 2024 Q3, 113年度",
+  "risk_categories": ["audit", "sampling", "penalty", "transfer_pricing", "pillar_two", "cfc", "permanent_establishment", "withholding_tax", "tariff", "vat_gst"],
+  "document_types": ["annual_report", "financial_statement", "sustainability_report", "tax_policy", "regulatory_filing", "news", "court_ruling"],
+  "focused_subsidiaries": ["names of any specific subsidiaries the user wants drilled into"],
+  "must_have_terms": ["1-3 short query phrases that almost certainly appear in good results"],
+  "exclude_terms": ["1-3 phrases that signal noise the user does NOT want"]
+}}
+
+Original keywords: {keywords}
+User intent: {user_prompt or ""}
+
+Rules:
+- Only include risk_categories that are clearly implied; default to ["audit", "sampling", "penalty"] when ambiguous.
+- jurisdictions must be uppercase ISO codes from the allowed list.
+- Keep arrays short (<= 6 items each).
+- No prose, no markdown, JSON only.
+"""
+        schema_hint = {
+            "entities": [],
+            "jurisdictions": [],
+            "time_period": "",
+            "risk_categories": [],
+            "document_types": [],
+            "focused_subsidiaries": [],
+            "must_have_terms": [],
+            "exclude_terms": [],
+        }
+        data = self.llm_service.generate_json(
+            prompt=prompt,
+            schema_hint=schema_hint,
+            provider=provider,
+            model_name=model_name,
+        )
+        normalized: Dict = {}
+        for key, default in schema_hint.items():
+            value = data.get(key, default)
+            if isinstance(default, list) and not isinstance(value, list):
+                value = []
+            if isinstance(value, list):
+                cleaned_list = []
+                for item in value:
+                    if not isinstance(item, str):
+                        continue
+                    item = item.strip()
+                    if item:
+                        cleaned_list.append(item)
+                normalized[key] = cleaned_list[:6]
+            else:
+                normalized[key] = value if isinstance(value, str) else ""
+        return normalized
+
+    def _build_intent_queries(self, intent: Dict, aliases: List[str]) -> List[str]:
+        if not intent:
+            return []
+        queries: List[str] = []
+        seen: set = set()
+        primary_entities = intent.get("entities") or aliases or []
+        primary_entities = primary_entities[:5]
+
+        risk_lookup = {category: self.TAX_AUDIT_THESAURUS.get(category, []) for category in intent.get("risk_categories") or []}
+        if not risk_lookup:
+            risk_lookup = {
+                "audit": self.TAX_AUDIT_THESAURUS["audit"],
+                "sampling": self.TAX_AUDIT_THESAURUS["sampling"],
+                "penalty": self.TAX_AUDIT_THESAURUS["penalty"],
+            }
+
+        for entity in primary_entities:
+            for category, synonyms in risk_lookup.items():
+                for synonym in synonyms[:5]:
+                    query = f"\"{entity}\" {synonym}"
+                    if intent.get("time_period"):
+                        query += f" {intent['time_period']}"
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    queries.append(cleaned)
+
+        for entity in primary_entities[:3]:
+            for jurisdiction in (intent.get("jurisdictions") or []):
+                profile = self.JURISDICTION_PROFILE.get(jurisdiction.lower(), {})
+                for audit_term in profile.get("audit_terms", [])[:3]:
+                    query = f"\"{entity}\" {audit_term}"
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    queries.append(cleaned)
+
+        for must_have in intent.get("must_have_terms", [])[:3]:
+            for entity in primary_entities[:3]:
+                query = f"\"{entity}\" {must_have}"
+                cleaned = " ".join(query.split())
+                lowered = cleaned.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                queries.append(cleaned)
+
+        for subsidiary in intent.get("focused_subsidiaries", [])[:5]:
+            for synonym_list in risk_lookup.values():
+                for synonym in synonym_list[:3]:
+                    query = f"\"{subsidiary}\" {synonym}"
+                    cleaned = " ".join(query.split())
+                    lowered = cleaned.lower()
+                    if lowered in seen:
+                        continue
+                    seen.add(lowered)
+                    queries.append(cleaned)
+
+        return queries[:60]
+
+    def _collect_keyword_service_vocab(self, limit: int = 200) -> List[str]:
+        try:
+            from services.keyword_service import KeywordService
+        except Exception:
+            return []
+        try:
+            service = KeywordService()
+            if service.vectorizer is None and getattr(service, "feature_names", None) is None:
+                service.train_from_database()
+        except Exception:
+            return []
+        feature_names = getattr(service, "feature_names", []) or []
+        if not feature_names:
+            return []
+        candidates: List[str] = []
+        for term in feature_names[:limit]:
+            cleaned = " ".join(str(term).split()).strip()
+            if not cleaned or self._is_low_value_alias(cleaned):
+                continue
+            candidates.append(cleaned)
+        return candidates
+
+    def _pseudo_relevance_feedback(
+        self,
+        seed_results: List[Dict],
+        keywords: List[str],
+        user_prompt: str = None,
+        top_terms: int = 6,
+    ) -> List[str]:
+        if not seed_results:
+            return []
+        existing_terms = set()
+        existing_text = " ".join((keywords or []) + [user_prompt or ""]).lower()
+        for token in re.findall(r"[一-鿿]{2,}|[a-zA-Z][a-zA-Z0-9-]{2,}", existing_text):
+            existing_terms.add(token.lower())
+
+        token_counts: Dict[str, int] = {}
+        for item in seed_results[:25]:
+            text = f"{item.get('title', '')} {item.get('snippet', '')}"
+            for english_token in re.findall(r"[A-Za-z][A-Za-z0-9.-]{3,}", text):
+                lowered = english_token.lower()
+                if lowered in existing_terms:
+                    continue
+                if self._is_low_value_alias(english_token):
+                    continue
+                token_counts[english_token] = token_counts.get(english_token, 0) + 1
+            for cjk_run in re.findall(r"[一-鿿]+", text):
+                for length in (4, 3, 2):
+                    if len(cjk_run) < length:
+                        continue
+                    for start in range(0, len(cjk_run) - length + 1):
+                        ngram = cjk_run[start:start + length]
+                        if ngram.lower() in existing_terms:
+                            continue
+                        if self._is_low_value_alias(ngram):
+                            continue
+                        token_counts[ngram] = token_counts.get(ngram, 0) + 1
+
+        for vocab_term in self._collect_keyword_service_vocab(limit=200):
+            lowered_vocab = vocab_term.lower()
+            if lowered_vocab in existing_terms:
+                continue
+            for item in seed_results[:25]:
+                text_lower = f"{item.get('title', '')} {item.get('snippet', '')}".lower()
+                if vocab_term.lower() in text_lower:
+                    token_counts[vocab_term] = token_counts.get(vocab_term, 0) + 1
+
+        ranked = sorted(token_counts.items(), key=lambda pair: pair[1], reverse=True)
+        candidate_terms = [token for token, count in ranked if count >= 2][:top_terms]
+        if not candidate_terms:
+            return []
+
+        aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
+        primary_alias = aliases[0] if aliases else " ".join(keywords or []).strip()
+        if not primary_alias:
+            return []
+
+        feedback_queries: List[str] = []
+        seen: set = set()
+        for term in candidate_terms:
+            for audit_topic in ("tax audit", "稅務查核", "税務調査"):
+                query = f"\"{primary_alias}\" {term} {audit_topic}"
+                cleaned = " ".join(query.split())
+                lowered = cleaned.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                feedback_queries.append(cleaned)
+            for sampling_term in self.AUDIT_SAMPLING_TERMS[:6]:
+                query = f"\"{primary_alias}\" {term} {sampling_term}"
+                cleaned = " ".join(query.split())
+                lowered = cleaned.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                feedback_queries.append(cleaned)
+
+        return feedback_queries[:24]
+
     def _build_ai_query_variants(
         self,
         keywords: List[str],
@@ -1579,6 +2475,7 @@ Requirements:
 
     def _merge_query_variants(self, keywords: List[str], user_prompt: str, ai_variants: List[str]) -> List[str]:
         base_variants = self._build_query_variants(keywords=keywords, user_prompt=user_prompt)
+        thesaurus_variants = self._expand_with_thesaurus(keywords=keywords, user_prompt=user_prompt)
         combined = []
         seen = set()
 
@@ -1586,8 +2483,10 @@ Requirements:
         if base_variants:
             prioritized.append(base_variants[0])
         prioritized.extend(ai_variants[:6])
+        prioritized.extend(thesaurus_variants[:18])
         prioritized.extend(base_variants[1:])
         prioritized.extend(ai_variants[6:])
+        prioritized.extend(thesaurus_variants[18:])
 
         for variant in prioritized:
             lowered = variant.lower()
@@ -1595,7 +2494,7 @@ Requirements:
                 continue
             seen.add(lowered)
             combined.append(variant)
-        return combined[:36]
+        return combined[:48]
 
     def _search_bing_news_rss(self, query: str, window: Dict[str, datetime], max_results: int) -> List[Dict]:
         when_clause = self._build_google_news_when(window)
@@ -1631,12 +2530,7 @@ Requirements:
 
     def _search_bing_web(self, query: str, max_results: int) -> List[Dict]:
         url = f"https://www.bing.com/search?q={quote_plus(query)}&setlang=zh-TW&cc=TW"
-        response = requests.get(
-            url,
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=self.SEARCH_TIMEOUT_SECONDS
-        )
-        response.raise_for_status()
+        response = self._cached_request("GET", url)
         soup = BeautifulSoup(response.text, "html.parser")
         results = []
         for result in soup.select("li.b_algo"):
@@ -1663,13 +2557,7 @@ Requirements:
 
     def _search_duckduckgo_html(self, query: str, max_results: int) -> List[Dict]:
         url = "https://html.duckduckgo.com/html/"
-        response = requests.post(
-            url,
-            data={"q": query},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=self.SEARCH_TIMEOUT_SECONDS
-        )
-        response.raise_for_status()
+        response = self._cached_request("POST", url, data={"q": query})
         soup = BeautifulSoup(response.text, "html.parser")
         results = []
         for result in soup.select(".result"):
@@ -1694,11 +2582,451 @@ Requirements:
     def _search_duckduckgo_pdf(self, query: str, max_results: int) -> List[Dict]:
         return self._search_duckduckgo_html(f"{query} filetype:pdf", max_results)
 
-    def _safe_search_call(self, search_func, *args) -> List[Dict]:
-        try:
-            return search_func(*args)
-        except Exception:
+    def _search_sec_edgar(
+        self,
+        query: str,
+        max_results: int,
+        forms: str = "10-K,20-F,10-Q,8-K,6-K,40-F"
+    ) -> List[Dict]:
+        if not query.strip():
             return []
+        endpoint = "https://efts.sec.gov/LATEST/search-index"
+        params = {
+            "q": query,
+            "forms": forms,
+            "hits": str(min(20, max(max_results, 5))),
+        }
+        response = self._cached_request(
+            "GET",
+            endpoint,
+            params=params,
+            headers={"User-Agent": self.SEC_USER_AGENT, "Accept": "application/json"},
+            timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+        )
+        try:
+            payload = response.json()
+        except ValueError:
+            return []
+        hits = (payload.get("hits") or {}).get("hits") or []
+        results = []
+        for hit in hits[:max_results]:
+            source = hit.get("_source") or {}
+            adsh = (source.get("adsh") or "").strip()
+            ciks = source.get("ciks") or []
+            display_names = source.get("display_names") or []
+            form_name = (source.get("form") or "").strip()
+            file_date = source.get("file_date")
+            doc_id = (hit.get("_id") or "").strip()
+            primary_doc = doc_id.split(":", 1)[1] if ":" in doc_id else ""
+
+            cik = (ciks[0] if ciks else "").lstrip("0") or "0"
+            adsh_clean = adsh.replace("-", "")
+            if cik and adsh_clean and primary_doc:
+                url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{adsh_clean}/{primary_doc}"
+            elif cik and adsh_clean:
+                url = f"https://www.sec.gov/Archives/edgar/data/{cik}/{adsh_clean}/"
+            else:
+                url = f"https://efts.sec.gov/LATEST/search-index?q={quote_plus(query)}&forms={quote_plus(forms)}"
+
+            issuer = display_names[0] if display_names else "SEC Registrant"
+            title = f"SEC EDGAR {form_name or 'Filing'} - {issuer}".strip(" -")
+            snippet_pieces = [
+                f"Form {form_name}" if form_name else "SEC filing",
+                f"filed {file_date}" if file_date else "",
+                "; issuer: " + ", ".join(display_names[:2]) if display_names else "",
+                "; covers income tax expense, deferred tax, subsidiaries, related party transactions, "
+                "uncertain tax positions, transfer pricing, and cross-border tax disclosures.",
+            ]
+            snippet = "".join(piece for piece in snippet_pieces if piece)
+
+            results.append({
+                "title": title,
+                "url": url,
+                "snippet": snippet,
+                "source": "sec_edgar",
+                "published_at": file_date,
+                "relevance_score": 0.0,
+            })
+        return results
+
+    def _search_eur_lex(self, query: str, max_results: int) -> List[Dict]:
+        if not query.strip():
+            return []
+        url = (
+            "https://eur-lex.europa.eu/search.html"
+            f"?text={quote_plus(query)}&qid=&type=quick&scope=EURLEX"
+        )
+        try:
+            response = self._cached_request(
+                "GET",
+                url,
+                timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+                headers={"Accept": "text/html"},
+            )
+        except requests.RequestException:
+            return []
+        soup = BeautifulSoup(response.text, "html.parser")
+        results = []
+        for entry in soup.select(".SearchResult, .result"):
+            link = entry.select_one("a.title, h3 a, h2 a, a")
+            if not link:
+                continue
+            href = link.get("href") or ""
+            if not href:
+                continue
+            absolute_url = urljoin("https://eur-lex.europa.eu", href)
+            title = link.get_text(" ", strip=True) or "EUR-Lex result"
+            snippet_node = entry.select_one(".forceIndent, .normal, .ft, p")
+            snippet = snippet_node.get_text(" ", strip=True) if snippet_node else ""
+            results.append({
+                "title": title,
+                "url": absolute_url,
+                "snippet": snippet or "EUR-Lex official EU regulation, directive, or case-law search result for cross-border tax research.",
+                "source": "eur_lex",
+                "published_at": None,
+                "relevance_score": 0.0,
+            })
+            if len(results) >= max_results:
+                break
+        return results
+
+    def _search_taiwan_law(self, query: str, max_results: int) -> List[Dict]:
+        if not query.strip():
+            return []
+        url = (
+            "https://law.moj.gov.tw/Search/SearchLaw.aspx"
+            f"?ty=ON&kw={quote_plus(query)}"
+        )
+        try:
+            response = self._cached_request(
+                "GET",
+                url,
+                timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+                headers={"Accept": "text/html"},
+            )
+        except requests.RequestException:
+            return []
+        soup = BeautifulSoup(response.text, "html.parser")
+        results = []
+        for row in soup.select("table.tab-list tbody tr, table tr"):
+            link = row.select_one("a[href*='LawAll'], a[href*='LawSearchLaw'], a[href*='Law']")
+            if not link:
+                continue
+            href = link.get("href") or ""
+            if not href or href.startswith("#"):
+                continue
+            absolute_url = urljoin("https://law.moj.gov.tw/", href)
+            title = link.get_text(" ", strip=True)
+            if not title or len(title) < 2:
+                continue
+            description_node = row.select_one("td:nth-of-type(3), .law-result")
+            snippet = description_node.get_text(" ", strip=True) if description_node else ""
+            results.append({
+                "title": f"全國法規資料庫 - {title}",
+                "url": absolute_url,
+                "snippet": snippet or "Taiwan official legal database entry covering tax law, customs, and regulatory provisions.",
+                "source": "taiwan_law_moj",
+                "published_at": None,
+                "relevance_score": 0.0,
+            })
+            if len(results) >= max_results:
+                break
+        return results
+
+    def _search_edinet_jp(self, query: str, max_results: int) -> List[Dict]:
+        if not query.strip():
+            return []
+        endpoint = "https://disclosure2.edinet-fsa.go.jp/WEEK0010.aspx"
+        params = {"uji.verb": "W1E62012CXP01001Action", "uji.bean": "ee.bean.parent.EECommonSearchBean", "TID": "W1E62011", "PID": "W1E62011", "SESSIONKEY": "", "lgKbn": "2", "pkbn": "0", "skbn": "0", "dskb": "", "askb": "", "dflg": "0", "iflg": "0", "preTID1": "", "preTID2": "", "preTID3": "", "preTID4": "", "preTID5": "", "preTID6": "", "preTID7": "", "preTID8": "", "preTID9": "", "preTID10": "", "preTID11": "", "preTID12": "", "preTID13": "", "preTID14": "", "preTID15": "", "nextTID": "", "currentPage": "1", "PreTermPath": "", "fokKbn": "1", "tDocTextSnm": query, "tDocSearchType": "0", "kanrenDocFlg": "0"}
+        try:
+            response = self._cached_request(
+                "GET",
+                endpoint,
+                params=params,
+                timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+                headers={"Accept": "text/html"},
+            )
+        except requests.RequestException:
+            return []
+        soup = BeautifulSoup(response.text, "html.parser")
+        results: List[Dict] = []
+        for row in soup.select("table tr"):
+            link = row.find("a", href=True)
+            if not link:
+                continue
+            href = link.get("href") or ""
+            if not href:
+                continue
+            absolute_url = urljoin("https://disclosure2.edinet-fsa.go.jp/", href)
+            title = link.get_text(" ", strip=True)
+            if not title or len(title) < 4:
+                continue
+            results.append({
+                "title": f"EDINET 開示書類 - {title}",
+                "url": absolute_url,
+                "snippet": "Japan FSA EDINET disclosure (annual securities report, semiannual report, extraordinary report). Often includes consolidated income tax expense, related party transactions, segment tax breakdown.",
+                "source": "edinet_jp",
+                "published_at": None,
+                "relevance_score": 0.0,
+            })
+            if len(results) >= max_results:
+                break
+        return results
+
+    def _search_dart_kr(self, query: str, max_results: int) -> List[Dict]:
+        if not query.strip():
+            return []
+        endpoint = "https://dart.fss.or.kr/dsab007/main.do"
+        params = {
+            "selectKey": "report",
+            "textCrpNm": query,
+            "currentPage": "1",
+            "maxResults": str(min(20, max(max_results, 5))),
+            "maxLinks": "10",
+        }
+        try:
+            response = self._cached_request(
+                "GET",
+                endpoint,
+                params=params,
+                timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+                headers={"Accept": "text/html"},
+            )
+        except requests.RequestException:
+            return []
+        soup = BeautifulSoup(response.text, "html.parser")
+        results: List[Dict] = []
+        for row in soup.select("table.tbList tbody tr, table tbody tr"):
+            link = row.find("a", href=True)
+            if not link:
+                continue
+            href = link.get("href") or ""
+            if not href or href.startswith("#"):
+                continue
+            absolute_url = urljoin("https://dart.fss.or.kr/", href)
+            title = link.get_text(" ", strip=True)
+            if not title or len(title) < 4:
+                continue
+            company_node = row.select_one("td:nth-of-type(2)")
+            company = company_node.get_text(" ", strip=True) if company_node else ""
+            results.append({
+                "title": f"DART 공시 - {company} {title}".strip(),
+                "url": absolute_url,
+                "snippet": "Korea FSS DART disclosure (사업보고서, 분기보고서, 주요사항보고서). 법인세 비용, 이전가격, 특수관계자 거래, 종속회사 등 한국 상장사의 공시 자료.",
+                "source": "dart_kr",
+                "published_at": None,
+                "relevance_score": 0.0,
+            })
+            if len(results) >= max_results:
+                break
+        return results
+
+    def _search_company_sitemap(self, aliases: List[str], max_results: int) -> List[Dict]:
+        domains = self._company_domains_for_aliases(aliases)
+        if not domains:
+            return []
+        results = []
+        seen_urls = set()
+        keyword_pattern = re.compile(
+            r"(annual|sustain|esg|tax|investor|ir/|financial|report|governance|risk|"
+            r"年報|永續|稅|財報|投資人|關係|報告|公司治理|風險)",
+            re.IGNORECASE,
+        )
+
+        for domain in domains[:5]:
+            for sitemap_url in (
+                f"https://{domain}/sitemap.xml",
+                f"https://{domain}/sitemap_index.xml",
+                f"https://www.{domain}/sitemap.xml",
+            ):
+                try:
+                    response = self._cached_request(
+                        "GET",
+                        sitemap_url,
+                        timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+                        headers={"Accept": "application/xml,text/xml"},
+                    )
+                except requests.RequestException:
+                    continue
+
+                try:
+                    root = ET.fromstring(response.text)
+                except ET.ParseError:
+                    continue
+
+                for url_node in root.iter():
+                    tag = url_node.tag.lower()
+                    if not tag.endswith("loc"):
+                        continue
+                    loc_value = (url_node.text or "").strip()
+                    if not loc_value or loc_value in seen_urls:
+                        continue
+                    if loc_value.lower().endswith(".xml"):
+                        try:
+                            inner_response = self._cached_request(
+                                "GET",
+                                loc_value,
+                                timeout=self.DEEP_FETCH_TIMEOUT_SECONDS,
+                            )
+                            inner_root = ET.fromstring(inner_response.text)
+                        except (requests.RequestException, ET.ParseError):
+                            continue
+                        for inner_loc in inner_root.iter():
+                            if not inner_loc.tag.lower().endswith("loc"):
+                                continue
+                            inner_value = (inner_loc.text or "").strip()
+                            if not inner_value or inner_value in seen_urls:
+                                continue
+                            if not keyword_pattern.search(inner_value):
+                                continue
+                            seen_urls.add(inner_value)
+                            results.append({
+                                "title": f"{domain} sitemap entry: {inner_value.rsplit('/', 1)[-1] or inner_value}",
+                                "url": inner_value,
+                                "snippet": (
+                                    f"Discovered from {domain} sitemap. Likely relevant to investor relations, "
+                                    "annual report, sustainability report, tax governance, financial statement, "
+                                    "or subsidiary disclosure."
+                                ),
+                                "source": "company_sitemap",
+                                "published_at": None,
+                                "relevance_score": 0.0,
+                            })
+                            if len(results) >= max_results:
+                                return results
+                        continue
+                    if not keyword_pattern.search(loc_value):
+                        continue
+                    seen_urls.add(loc_value)
+                    results.append({
+                        "title": f"{domain} sitemap entry: {loc_value.rsplit('/', 1)[-1] or loc_value}",
+                        "url": loc_value,
+                        "snippet": (
+                            f"Discovered from {domain} sitemap. Likely relevant to investor relations, "
+                            "annual report, sustainability report, tax governance, financial statement, "
+                            "or subsidiary disclosure."
+                        ),
+                        "source": "company_sitemap",
+                        "published_at": None,
+                        "relevance_score": 0.0,
+                    })
+                    if len(results) >= max_results:
+                        return results
+                if results:
+                    break
+        return results
+
+    def _safe_search_call(self, search_func, *args) -> List[Dict]:
+        source_name = getattr(search_func, "__name__", "unknown")
+        if self._is_source_unhealthy(source_name):
+            return []
+        try:
+            results = search_func(*args)
+            self._record_source_outcome(source_name, success=True)
+            return results
+        except Exception:
+            self._record_source_outcome(source_name, success=False)
+            return []
+
+    def _record_source_outcome(self, source_name: str, success: bool):
+        with self._source_stats_lock:
+            stats = self._source_stats.setdefault(source_name, {"success": 0, "fail": 0, "consecutive_fail": 0})
+            if success:
+                stats["success"] += 1
+                stats["consecutive_fail"] = 0
+            else:
+                stats["fail"] += 1
+                stats["consecutive_fail"] += 1
+
+    def _is_source_unhealthy(self, source_name: str) -> bool:
+        with self._source_stats_lock:
+            stats = self._source_stats.get(source_name)
+            if not stats:
+                return False
+            return stats["consecutive_fail"] >= self.SOURCE_HEALTH_FAIL_THRESHOLD
+
+    def get_source_health_snapshot(self) -> Dict[str, Dict[str, int]]:
+        with self._source_stats_lock:
+            return {name: dict(values) for name, values in self._source_stats.items()}
+
+    def _run_parallel_searches(
+        self,
+        tasks: List[Tuple[Callable, Tuple[Any, ...]]],
+        candidate_limit: int,
+        merged: List[Dict],
+        seen_urls: set,
+    ) -> bool:
+        if not tasks:
+            return False
+        max_workers = min(self.PARALLEL_FETCH_WORKERS, max(2, len(tasks)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(self._safe_search_call, fn, *args) for fn, args in tasks]
+            for future in as_completed(futures):
+                try:
+                    items = future.result() or []
+                except Exception:
+                    items = []
+                for item in items:
+                    self._append_unique_result(merged, seen_urls, item)
+                if len(merged) >= candidate_limit:
+                    for pending in futures:
+                        pending.cancel()
+                    return True
+        return False
+
+    def _dedup_by_title_similarity(self, results: List[Dict], threshold: float = 0.7) -> List[Dict]:
+        if not results:
+            return results
+        deduped: List[Dict] = []
+        seen_signatures: List[set] = []
+        for item in results:
+            title = (item.get("title") or "").strip()
+            if not title:
+                deduped.append(item)
+                continue
+            tokens = self._title_signature(title)
+            if not tokens:
+                deduped.append(item)
+                continue
+            duplicate_index = -1
+            for index, signature in enumerate(seen_signatures):
+                jaccard = self._jaccard(tokens, signature)
+                if jaccard >= threshold:
+                    duplicate_index = index
+                    break
+            if duplicate_index >= 0:
+                existing = deduped[duplicate_index]
+                if (item.get("relevance_score") or 0.0) > (existing.get("relevance_score") or 0.0):
+                    existing.setdefault("duplicate_titles", []).append(existing.get("title"))
+                    existing.update({k: v for k, v in item.items() if k != "duplicate_titles"})
+                else:
+                    existing.setdefault("duplicate_titles", []).append(title)
+                continue
+            seen_signatures.append(tokens)
+            deduped.append(item)
+        return deduped
+
+    def _title_signature(self, title: str) -> set:
+        cleaned = re.sub(r"[\s\-—\|·•:：、，,。.（）()『』「」\"'’“”/\\]", " ", title.lower())
+        tokens = set()
+        for english_token in re.findall(r"[a-z][a-z0-9]{2,}", cleaned):
+            tokens.add(english_token)
+        for cjk_run in re.findall(r"[一-鿿]+", cleaned):
+            for length in (3, 2):
+                if len(cjk_run) < length:
+                    continue
+                for start in range(0, len(cjk_run) - length + 1):
+                    tokens.add(cjk_run[start:start + length])
+        return tokens
+
+    def _jaccard(self, left: set, right: set) -> float:
+        if not left or not right:
+            return 0.0
+        intersection = left & right
+        union = left | right
+        if not union:
+            return 0.0
+        return len(intersection) / len(union)
 
     def _append_unique_result(self, merged: List[Dict], seen_urls: set, item: Dict):
         normalized_url = self._normalize_result_url(item.get("url") or "").strip()
@@ -1739,9 +3067,7 @@ Requirements:
         return domain in self.LOW_SIGNAL_DOMAINS
 
     def _fetch_google_news_feed(self, url: str, max_results: int, source_name: str) -> List[Dict]:
-        response = requests.get(url, timeout=self.SEARCH_TIMEOUT_SECONDS, headers={"User-Agent": "Mozilla/5.0"})
-        response.raise_for_status()
-
+        response = self._cached_request("GET", url)
         root = ET.fromstring(response.text)
         items = []
         for item in root.findall(".//item"):
@@ -1764,10 +3090,19 @@ Requirements:
                 break
         return items
 
-    def _rank_results(self, results: List[Dict], keywords: List[str], user_prompt: str = None) -> List[Dict]:
+    def _rank_results(
+        self,
+        results: List[Dict],
+        keywords: List[str],
+        user_prompt: str = None,
+        intent: Optional[Dict] = None,
+    ) -> List[Dict]:
         prompt_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9_-]{2,}", (user_prompt or "").lower())
         entity_aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
         event_intent = self._has_tax_event_intent(keywords=keywords, user_prompt=user_prompt)
+        intent = intent or {}
+        exclude_terms = [term.lower() for term in (intent.get("exclude_terms") or []) if isinstance(term, str)]
+        must_have_terms = [term.lower() for term in (intent.get("must_have_terms") or []) if isinstance(term, str)]
 
         for result in results:
             haystack = " ".join([
@@ -1783,6 +3118,11 @@ Requirements:
             tax_event_hits = sum(
                 1.2
                 for phrase in self.TAX_RISK_EVENT_TOPICS
+                if phrase.lower() in haystack or phrase.lower() in url.lower()
+            )
+            sampling_hits = sum(
+                1.4
+                for phrase in self.AUDIT_SAMPLING_TERMS
                 if phrase.lower() in haystack or phrase.lower() in url.lower()
             )
             subsidiary_hits = sum(
@@ -1805,6 +3145,12 @@ Requirements:
             source_bonus += 1.4 if result.get("source") == "official_seed" else 0.0
             source_bonus += 1.0 if result.get("source") == "official_domain_seed" else 0.0
             source_bonus += 1.0 if result.get("source") == "reference_seed" else 0.0
+            source_bonus += 1.8 if result.get("source") == "sec_edgar" else 0.0
+            source_bonus += 1.5 if result.get("source") == "eur_lex" else 0.0
+            source_bonus += 1.5 if result.get("source") == "taiwan_law_moj" else 0.0
+            source_bonus += 1.6 if result.get("source") == "edinet_jp" else 0.0
+            source_bonus += 1.6 if result.get("source") == "dart_kr" else 0.0
+            source_bonus += 1.2 if result.get("source") == "company_sitemap" else 0.0
             topical_signal = prompt_hits + tax_phrase_hits + tax_event_hits + subsidiary_hits + official_bonus + disclosure_bonus + tax_news_bonus + pdf_bonus
             weak_topic_penalty = 2.6 if alias_hits > 0 and topical_signal < 1.0 else 0.0
             social_penalty = 1.2 if domain in {"www.linkedin.com", "linkedin.com", "www.pressreader.com", "pressreader.com"} else 0.0
@@ -1827,6 +3173,8 @@ Requirements:
                 and result.get("source") != "official_seed"
                 else 0.0
             )
+            exclude_penalty = sum(2.5 for term in exclude_terms if term and term in haystack)
+            must_have_bonus = sum(1.6 for term in must_have_terms if term and term in haystack)
 
             result["domain"] = domain
             result["result_type"] = self._infer_result_type(result)
@@ -1837,13 +3185,15 @@ Requirements:
                 entity_aliases=entity_aliases,
                 official_bonus=official_bonus,
                 disclosure_bonus=disclosure_bonus,
-                pdf_bonus=pdf_bonus
+                pdf_bonus=pdf_bonus,
+                intent=intent,
             )
             result["relevance_score"] = round(
                 keyword_hits
                 + prompt_hits
                 + tax_phrase_hits
                 + tax_event_hits
+                + sampling_hits
                 + subsidiary_hits
                 + alias_hits
                 + domain_alias_bonus
@@ -1855,11 +3205,13 @@ Requirements:
                 + pdf_bonus
                 + title_bonus
                 + source_bonus
+                + must_have_bonus
                 - weak_topic_penalty
                 - social_penalty
                 - generic_reference_penalty
                 - unrelated_company_penalty
-                - event_document_penalty,
+                - event_document_penalty
+                - exclude_penalty,
                 2
             )
             if result.get("source") == "reference_seed" and alias_hits == 0 and domain_alias_bonus == 0 and has_company_focus:
@@ -1897,7 +3249,8 @@ Requirements:
         entity_aliases: List[str],
         official_bonus: float,
         disclosure_bonus: float,
-        pdf_bonus: float
+        pdf_bonus: float,
+        intent: Optional[Dict] = None,
     ) -> List[str]:
         haystack = " ".join([
             result.get("title", ""),
@@ -1951,6 +3304,14 @@ Requirements:
         if matched_event_terms:
             reasons.append(f"命中稅務事件線索：{', '.join(matched_event_terms)}")
 
+        matched_sampling_terms = [
+            term
+            for term in self.AUDIT_SAMPLING_TERMS
+            if term.lower() in haystack or term.lower() in (result.get("url", "").lower())
+        ][:3]
+        if matched_sampling_terms:
+            reasons.append(f"命中抽樣／選案查核線索：{', '.join(matched_sampling_terms)}")
+
         if pdf_bonus > 0:
             reasons.append("PDF / 文件型資料優先")
 
@@ -1960,10 +3321,21 @@ Requirements:
         if result.get("is_historical_context"):
             reasons.append("歷史稅務事件脈絡")
 
+        intent = intent or {}
+        must_have_terms = [term for term in (intent.get("must_have_terms") or []) if isinstance(term, str)]
+        matched_must_have = [term for term in must_have_terms if term.lower() in haystack][:2]
+        if matched_must_have:
+            reasons.append(f"命中意圖必含詞：{', '.join(matched_must_have)}")
+
+        exclude_terms = [term for term in (intent.get("exclude_terms") or []) if isinstance(term, str)]
+        matched_exclude = [term for term in exclude_terms if term.lower() in haystack][:2]
+        if matched_exclude:
+            reasons.append(f"命中意圖排除詞 (扣分)：{', '.join(matched_exclude)}")
+
         if not reasons:
             reasons.append("語意相近且整體相關")
 
-        return reasons[:4]
+        return reasons[:5]
 
     def _extract_domain(self, url: str) -> str:
         try:

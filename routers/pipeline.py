@@ -1,11 +1,44 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-from models.schemas import PipelineRunRequest, PipelineRunResponse, SearchTrainRequest, SearchTrainResponse
+from models.schemas import (
+    PipelineHistoryResponse,
+    PipelineRunRecord,
+    PipelineRunRequest,
+    PipelineRunResponse,
+    SearchTrainRequest,
+    SearchTrainResponse,
+)
 from services.pipeline_service import PipelineService
+from services.storage_service import StorageService
 
 
 router = APIRouter()
 pipeline_service = PipelineService()
+storage_service = StorageService()
+
+
+@router.get("/history", response_model=PipelineHistoryResponse, summary="列出最近的 pipeline 執行紀錄")
+async def list_pipeline_runs(limit: int = Query(default=50, ge=1, le=200)):
+    try:
+        runs = storage_service.list_pipeline_runs(limit=limit)
+        return PipelineHistoryResponse(total=len(runs), runs=[PipelineRunRecord(**run) for run in runs])
+    except Exception as e:
+        print(f"[ERROR] /api/pipeline/history: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/history/{run_id}", response_model=PipelineRunRecord, summary="取得單筆 pipeline 執行紀錄")
+async def get_pipeline_run(run_id: str):
+    try:
+        run = storage_service.get_pipeline_run(run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail="Run not found")
+        return PipelineRunRecord(**run)
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] /api/pipeline/history/{run_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/run", response_model=PipelineRunResponse, summary="單次執行搜尋、匯入、分析與報告輸出")

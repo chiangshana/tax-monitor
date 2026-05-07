@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -60,6 +61,11 @@ class StorageService:
         """)
         self._ensure_column(cur, "documents", "updated_at", "TEXT")
         self._ensure_column(cur, "documents", "published_date", "TEXT")
+        self._ensure_column(cur, "documents", "content_hash", "TEXT")
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_documents_content_hash ON documents(content_hash)")
+        except sqlite3.OperationalError:
+            pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS keyword_profiles (
                 profile_name TEXT PRIMARY KEY,
@@ -69,6 +75,38 @@ class StorageService:
                 updated_at TEXT
             )
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                run_id TEXT PRIMARY KEY,
+                started_at TEXT NOT NULL,
+                finished_at TEXT,
+                status TEXT NOT NULL,
+                source_name TEXT,
+                provider TEXT,
+                model_name TEXT,
+                keywords TEXT,
+                user_prompt TEXT,
+                payload TEXT,
+                result_summary TEXT,
+                error TEXT
+            )
+        """)
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started_at ON pipeline_runs(started_at DESC)")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cur.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
+                    doc_id UNINDEXED,
+                    title,
+                    raw_text,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                )
+            """)
+        except sqlite3.OperationalError:
+            pass
         conn.commit()
         if conn is not self._memory_conn:
             conn.close()
@@ -129,8 +167,9 @@ class StorageService:
             cur.execute("""
                 INSERT OR REPLACE INTO documents (
                     doc_id, title, source_type, source_name, file_name, url,
-                    raw_text, language, country, industry, published_date, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    raw_text, language, country, industry, published_date,
+                    content_hash, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 document["doc_id"],
                 document["title"],
@@ -143,13 +182,190 @@ class StorageService:
                 document.get("country"),
                 document.get("industry"),
                 document.get("published_date"),
+                document.get("content_hash"),
                 document["created_at"],
                 document.get("updated_at", document["created_at"])
             ))
+            try:
+                cur.execute("DELETE FROM documents_fts WHERE doc_id = ?", (document["doc_id"],))
+                cur.execute(
+                    "INSERT INTO documents_fts (doc_id, title, raw_text) VALUES (?, ?, ?)",
+                    (document["doc_id"], document.get("title", ""), document.get("raw_text", "")),
+                )
+            except sqlite3.OperationalError:
+                pass
             conn.commit()
             if conn is not self._memory_conn:
                 conn.close()
         self._retry_on_readonly(operation)
+
+    def find_document_by_content_hash(self, content_hash: str) -> Optional[Dict]:
+        if not content_hash:
+            return None
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM documents WHERE content_hash = ? ORDER BY created_at DESC LIMIT 1",
+            (content_hash,),
+        )
+        row = cur.fetchone()
+        if conn is not self._memory_conn:
+            conn.close()
+        return dict(row) if row else None
+
+    def fts_search_documents(self, query: str, limit: int = 20) -> List[Dict]:
+        if not query or not query.strip():
+            return []
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT d.doc_id, d.title, d.source_type, d.source_name, d.language,
+                       d.country, d.industry, d.published_date, d.created_at, d.updated_at,
+                       snippet(documents_fts, 2, '«', '»', ' … ', 12) AS snippet,
+                       bm25(documents_fts) AS rank
+                FROM documents_fts
+                JOIN documents d ON d.doc_id = documents_fts.doc_id
+                WHERE documents_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (query, limit),
+            )
+            rows = cur.fetchall()
+        except sqlite3.OperationalError:
+            rows = []
+        if conn is not self._memory_conn:
+            conn.close()
+        return [dict(row) for row in rows]
+
+    def record_pipeline_run(
+        self,
+        run_id: str,
+        started_at: str,
+        status: str,
+        source_name: Optional[str] = None,
+        provider: Optional[str] = None,
+        model_name: Optional[str] = None,
+        keywords: Optional[List[str]] = None,
+        user_prompt: Optional[str] = None,
+        payload: Optional[Dict] = None,
+    ):
+        def operation():
+            conn = self._connect()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO pipeline_runs (
+                    run_id, started_at, status, source_name, provider, model_name,
+                    keywords, user_prompt, payload, result_summary, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    COALESCE((SELECT result_summary FROM pipeline_runs WHERE run_id = ?), NULL),
+                    COALESCE((SELECT error FROM pipeline_runs WHERE run_id = ?), NULL)
+                )
+                """,
+                (
+                    run_id,
+                    started_at,
+                    status,
+                    source_name,
+                    provider,
+                    model_name,
+                    json.dumps(keywords or [], ensure_ascii=False),
+                    user_prompt,
+                    json.dumps(payload or {}, ensure_ascii=False, default=str),
+                    run_id,
+                    run_id,
+                ),
+            )
+            conn.commit()
+            if conn is not self._memory_conn:
+                conn.close()
+        self._retry_on_readonly(operation)
+
+    def finalize_pipeline_run(
+        self,
+        run_id: str,
+        finished_at: str,
+        status: str,
+        result_summary: Optional[Dict] = None,
+        error: Optional[str] = None,
+    ):
+        def operation():
+            conn = self._connect()
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE pipeline_runs
+                SET finished_at = ?, status = ?, result_summary = ?, error = ?
+                WHERE run_id = ?
+                """,
+                (
+                    finished_at,
+                    status,
+                    json.dumps(result_summary or {}, ensure_ascii=False, default=str),
+                    error,
+                    run_id,
+                ),
+            )
+            conn.commit()
+            if conn is not self._memory_conn:
+                conn.close()
+        self._retry_on_readonly(operation)
+
+    def list_pipeline_runs(self, limit: int = 50) -> List[Dict]:
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT run_id, started_at, finished_at, status, source_name, provider,
+                   model_name, keywords, user_prompt, result_summary, error
+            FROM pipeline_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        if conn is not self._memory_conn:
+            conn.close()
+        runs: List[Dict] = []
+        for row in rows:
+            data = dict(row)
+            for key in ("keywords", "result_summary"):
+                if data.get(key):
+                    try:
+                        data[key] = json.loads(data[key])
+                    except (TypeError, ValueError):
+                        pass
+            runs.append(data)
+        return runs
+
+    def get_pipeline_run(self, run_id: str) -> Optional[Dict]:
+        conn = self._connect()
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM pipeline_runs WHERE run_id = ?",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        if conn is not self._memory_conn:
+            conn.close()
+        if not row:
+            return None
+        data = dict(row)
+        for key in ("keywords", "payload", "result_summary"):
+            if data.get(key):
+                try:
+                    data[key] = json.loads(data[key])
+                except (TypeError, ValueError):
+                    pass
+        return data
 
     def get_document(self, doc_id: str) -> Optional[Dict]:
         conn = self._connect()

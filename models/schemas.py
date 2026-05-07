@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -40,10 +40,17 @@ class DocumentListRequest(BaseModel):
     keyword: Optional[str] = None
 
 
+class EmbeddedDocumentLink(BaseModel):
+    url: str
+    text: Optional[str] = None
+    looks_like_document: bool = False
+
+
 class UploadResponse(BaseModel):
     message: str
     document: DocumentSummary
     extracted_keywords: List[str]
+    embedded_document_links: List[EmbeddedDocumentLink] = Field(default_factory=list)
 
 
 class UrlIngestRequest(BaseModel):
@@ -168,7 +175,7 @@ class SlideSection(BaseModel):
 
 class ReportRequest(BaseModel):
     doc_id: str = Field(..., min_length=1)
-    output_format: str = Field(default="obsidian", pattern="^(obsidian|slides|pptx)$")
+    output_format: str = Field(default="obsidian", pattern="^(obsidian|slides|pptx|markdown)$")
     provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
     model_name: str = "qwen3:8b"
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
@@ -222,7 +229,7 @@ class PipelineRunRequest(BaseModel):
     analysis_mode: str = Field(default="translate_first", pattern="^(translate_first|analyze_first)$")
     provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
     model_name: str = "qwen3:8b"
-    report_format: str = Field(default="pptx", pattern="^(obsidian|slides|pptx)$")
+    report_format: str = Field(default="pptx", pattern="^(obsidian|slides|pptx|markdown)$")
     max_documents_to_process: int = Field(default=3, ge=1, le=10)
     high_risk_only: bool = False
 
@@ -244,6 +251,7 @@ class PipelineRunResponse(BaseModel):
     processed_count: int
     report_format: str
     documents: List[PipelineDocumentResult] = Field(default_factory=list)
+    run_id: Optional[str] = None
 
 
 class SearchTrainRequest(BaseModel):
@@ -290,6 +298,51 @@ class SearchTrainSearchResult(BaseModel):
     match_reasons: List[str] = Field(default_factory=list)
 
 
+class FtsSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class FtsSearchHit(BaseModel):
+    doc_id: str
+    title: Optional[str] = None
+    source_type: Optional[str] = None
+    source_name: Optional[str] = None
+    language: Optional[str] = None
+    country: Optional[str] = None
+    industry: Optional[str] = None
+    published_date: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+    snippet: Optional[str] = None
+    rank: Optional[float] = None
+
+
+class FtsSearchResponse(BaseModel):
+    query: str
+    total: int
+    hits: List[FtsSearchHit] = Field(default_factory=list)
+
+
+class PipelineRunRecord(BaseModel):
+    run_id: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    status: str
+    source_name: Optional[str] = None
+    provider: Optional[str] = None
+    model_name: Optional[str] = None
+    keywords: List[str] = Field(default_factory=list)
+    user_prompt: Optional[str] = None
+    result_summary: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+class PipelineHistoryResponse(BaseModel):
+    total: int
+    runs: List[PipelineRunRecord] = Field(default_factory=list)
+
+
 class SearchTrainResponse(BaseModel):
     query: str
     normalized_keywords: List[str] = Field(default_factory=list)
@@ -299,3 +352,4 @@ class SearchTrainResponse(BaseModel):
     trained_keyword_model: Dict[str, str | int]
     search_results: List[SearchTrainSearchResult] = Field(default_factory=list)
     documents: List[SearchTrainDocumentResult] = Field(default_factory=list)
+    run_id: Optional[str] = None

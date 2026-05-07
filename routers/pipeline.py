@@ -63,7 +63,9 @@ async def run_pipeline(request: PipelineRunRequest):
             model_name=request.model_name,
             report_format=request.report_format,
             max_documents_to_process=request.max_documents_to_process,
-            high_risk_only=request.high_risk_only
+            high_risk_only=request.high_risk_only,
+            use_rag_context=request.use_rag_context,
+            rag_top_k=request.rag_top_k
         )
         return PipelineRunResponse(**result)
     except Exception as e:
@@ -93,7 +95,9 @@ async def run_search_train(request: SearchTrainRequest):
             provider=request.provider,
             model_name=request.model_name,
             max_documents_to_process=request.max_documents_to_process,
-            high_risk_only=request.high_risk_only
+            high_risk_only=request.high_risk_only,
+            use_rag_context=request.use_rag_context,
+            rag_top_k=request.rag_top_k
         )
         return SearchTrainResponse(**result)
     except Exception as e:

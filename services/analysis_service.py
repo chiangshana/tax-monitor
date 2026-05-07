@@ -6,6 +6,7 @@ from services.document_service import DocumentService
 from services.keyword_service import KeywordService
 from services.language_service import LanguageService
 from services.llm_service import LLMService
+from services.rag_service import RAGService
 from services.translator_service import TranslatorService
 
 
@@ -16,6 +17,7 @@ class AnalysisService:
         self.language_service = LanguageService()
         self.translator_service = TranslatorService()
         self.llm_service = LLMService()
+        self.rag_service = RAGService()
 
     async def analyze_document(
         self,
@@ -25,7 +27,10 @@ class AnalysisService:
         use_llm: bool = False,
         provider: str = "ollama",
         user_prompt: str = None,
-        model_name: str = "qwen3:8b"
+        model_name: str = "qwen3:8b",
+        use_rag_context: bool = True,
+        rag_top_k: int = 4,
+        rag_query: str = None
     ):
         document = self.document_service.get_document(doc_id)
         if not document:
@@ -44,6 +49,20 @@ class AnalysisService:
         evidence = self._extract_evidence(raw_text, auto_keywords)
         risk_tags = self._extract_risk_tags(raw_text, auto_keywords)
         bilingual_summary = {}
+        rag_context = {"query": "", "chunks": [], "context_text": ""}
+        if use_rag_context:
+            rag_context = self.rag_service.retrieve_context(
+                query=self._build_rag_query(
+                    title=title,
+                    auto_keywords=auto_keywords,
+                    user_prompt=user_prompt,
+                    rag_query=rag_query,
+                ),
+                exclude_doc_id=doc_id,
+                top_k=rag_top_k,
+            )
+            if rag_context.get("chunks"):
+                notes.append(f"RAG context used: {len(rag_context['chunks'])} related chunks")
 
         if mode == "translate_first":
             notes.append("先翻譯，再分析")
@@ -62,7 +81,8 @@ class AnalysisService:
                 use_llm=use_llm,
                 provider=provider,
                 user_prompt=user_prompt,
-                model_name=model_name
+                model_name=model_name,
+                rag_context=rag_context.get("context_text", "")
             )
             translated_summary = None
             bilingual_summary = {
@@ -79,7 +99,8 @@ class AnalysisService:
                 use_llm=use_llm,
                 provider=provider,
                 user_prompt=user_prompt,
-                model_name=model_name
+                model_name=model_name,
+                rag_context=rag_context.get("context_text", "")
             )
             translated_summary = await self.translator_service.translate_text(
                 text=summary,
@@ -111,7 +132,22 @@ class AnalysisService:
             "translated_summary": translated_summary,
             "bilingual_summary": bilingual_summary,
             "evidence": evidence,
-            "notes": notes
+            "notes": notes,
+            "rag_context": {
+                "query": rag_context.get("query", ""),
+                "chunks": [
+                    {
+                        "doc_id": chunk.get("doc_id"),
+                        "title": chunk.get("title"),
+                        "url": chunk.get("url"),
+                        "source_name": chunk.get("source_name"),
+                        "published_date": chunk.get("published_date"),
+                        "score": chunk.get("score"),
+                        "chunk_index": chunk.get("chunk_index"),
+                    }
+                    for chunk in rag_context.get("chunks", [])
+                ],
+            }
         }
 
     async def preview_translation(self, raw_text: str, original_language: str, target_language: str):
@@ -130,7 +166,8 @@ class AnalysisService:
         use_llm: bool,
         provider: str,
         user_prompt: str,
-        model_name: str
+        model_name: str,
+        rag_context: str = ""
     ) -> str:
         fallback = self._fallback_summary(text, keywords)
 
@@ -153,6 +190,9 @@ class AnalysisService:
 
 關鍵字：{keywords}
 使用者需求：{user_prompt or ""}
+RAG 相關背景（供交叉比對，不可把沒有證據的推測寫成事實）：
+{rag_context or "N/A"}
+
 文本：
 {text[:12000]}
 """
@@ -163,6 +203,23 @@ class AnalysisService:
             model_name=model_name
         )
         return data.get("summary", fallback)
+
+    def _build_rag_query(
+        self,
+        title: str,
+        auto_keywords: List[str],
+        user_prompt: str = None,
+        rag_query: str = None,
+    ) -> str:
+        parts = [
+            title or "",
+            user_prompt or "",
+            rag_query or "",
+            " ".join(auto_keywords or []),
+            "tax risk transfer pricing withholding tax permanent establishment pillar two audit penalty filing obligation",
+            "稅務風險 轉讓訂價 扣繳稅 常設機構 全球最低稅負 稅務稽查 補稅 申報義務",
+        ]
+        return " ".join(part for part in parts if part).strip()
 
     def _fallback_summary(self, text: str, keywords: List[str]) -> str:
         sentences = self.language_service.split_sentences(text)

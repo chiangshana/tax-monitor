@@ -245,6 +245,7 @@ class ResultsPanel(ttk.Frame):
                     f"   url: {doc.get('url', '')}",
                     f"   risk: {doc.get('risk_level') or 'not analyzed'}",
                     f"   tags: {', '.join(doc.get('risk_tags', []))}",
+                    f"   RAG sources: {doc.get('rag_source_count', 0)}",
                     f"   keywords: {', '.join(doc.get('extracted_keywords', []))}",
                 ])
             )

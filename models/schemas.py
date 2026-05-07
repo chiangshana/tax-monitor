@@ -76,6 +76,8 @@ class AnalysisRequest(BaseModel):
     provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
     model_name: str = "qwen3:8b"
     user_prompt: Optional[str] = None
+    use_rag_context: bool = True
+    rag_top_k: int = Field(default=4, ge=0, le=10)
 
 
 class AnalysisResponse(BaseModel):
@@ -92,6 +94,7 @@ class AnalysisResponse(BaseModel):
     bilingual_summary: Dict[str, str] = Field(default_factory=dict)
     evidence: List[str] = []
     notes: List[str] = []
+    rag_context: Dict = Field(default_factory=dict)
 
 
 class KeywordTrainResponse(BaseModel):
@@ -180,6 +183,8 @@ class ReportRequest(BaseModel):
     model_name: str = "qwen3:8b"
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
     user_prompt: Optional[str] = None
+    use_rag_context: bool = True
+    rag_top_k: int = Field(default=4, ge=0, le=10)
 
 
 class ReportResponse(BaseModel):
@@ -232,6 +237,8 @@ class PipelineRunRequest(BaseModel):
     report_format: str = Field(default="pptx", pattern="^(obsidian|slides|pptx|markdown)$")
     max_documents_to_process: int = Field(default=3, ge=1, le=10)
     high_risk_only: bool = False
+    use_rag_context: bool = True
+    rag_top_k: int = Field(default=4, ge=0, le=10)
 
 
 class PipelineDocumentResult(BaseModel):
@@ -240,6 +247,7 @@ class PipelineDocumentResult(BaseModel):
     source_url: Optional[str] = None
     risk_level: str
     risk_tags: List[str] = Field(default_factory=list)
+    rag_source_count: int = 0
     report_format: str
     report_file_path: Optional[str] = None
 
@@ -274,6 +282,8 @@ class SearchTrainRequest(BaseModel):
     model_name: str = "qwen3:8b"
     max_documents_to_process: int = Field(default=3, ge=1, le=10)
     high_risk_only: bool = False
+    use_rag_context: bool = True
+    rag_top_k: int = Field(default=4, ge=0, le=10)
 
 
 class SearchTrainDocumentResult(BaseModel):
@@ -284,6 +294,7 @@ class SearchTrainDocumentResult(BaseModel):
     extracted_keywords: List[str] = Field(default_factory=list)
     risk_level: Optional[str] = None
     risk_tags: List[str] = Field(default_factory=list)
+    rag_source_count: int = 0
     pptx_file_path: Optional[str] = None
 
 

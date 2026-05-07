@@ -1,4 +1,366 @@
-﻿# è·¨åœ‹æ³•ä»¤èˆ‡ç¨…å‹™é¢¨éšªç›£æ¸¬ç³»çµ±ï¼ˆTax Monitor APIï¼‰
+# Tax Monitor 交付版快速指南
+
+最後整理日期：2026-05-08
+
+Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完成：
+
+1. 輸入公司、子公司、產業或稅務風險關鍵字
+2. 自動搜尋 DuckDuckGo / Bing / Google News / 深度研究來源
+3. 匯入網路文件與 PDF / HTML / 文字內容
+4. 使用本地 Ollama 或雲端 LLM 分析稅務風險
+5. 使用 RAG 交叉比對已匯入文件，補強分析脈絡
+6. 訓練關鍵字模型
+7. 產出 PPTX 稅務風險報告
+8. 匯出 n8n workflow 做排程自動化
+
+## 本輪檢查結果
+
+目前主流程符合專案需求：
+
+- Tkinter 桌面版可輸入關鍵字、補充需求、期間、資料筆數上限與來源
+- 搜尋層支援 `all` / `deep_research`，可用 DuckDuckGo、Bing、Google News、官方頁、SEC/IR/sitemap 等來源補強
+- 文件匯入後會訓練關鍵字模型
+- 分析與 PPTX 輸出可用 Ollama 或 OpenAI / Gemini / Claude API
+- n8n 分頁可依目前設定匯出自動化 workflow
+- 新增 RAG：分析每篇文件時會從本機已匯入資料庫抓相關片段，作為 LLM 交叉比對背景
+
+仍需注意：
+
+- RAG 只能強化「已匯入文件之間的關聯分析」，不能取代前面的網路搜尋；若搜尋結果太少，仍要提高 `Max results`、改用 `deep_research`、或在 Assistant 補充公司英文名、子公司名與稅務議題。
+- 安裝包目前是 Windows 版且未簽章，部分公司電腦可能需要 IT 放行。
+
+## 目前保留的乾淨資料夾結構
+
+```text
+tax-monitor-main/
+├─ desktop_app/       # Tkinter 桌面版
+├─ services/          # 搜尋、文件、LLM、分析、報告、pipeline 核心邏輯
+├─ routers/           # FastAPI routes
+├─ models/            # Pydantic schemas
+├─ ui/                # 舊版瀏覽器 UI
+├─ examples/          # smoke test 與範例 HTML
+├─ data/              # 執行時輸出，預設保留空資料夾
+├─ tools/             # 打包腳本
+├─ release/           # 對外交付安裝包
+├─ main.py            # FastAPI entrypoint
+├─ requirements.txt
+└─ README.md
+```
+
+已清掉的內容：
+
+- `build/`
+- `dist/`
+- `__pycache__/`
+- 舊版 `TaxMonitor-Setup-fixed*.exe`
+- 舊 SHA 檔
+- runtime DB / db journal
+- 測試輸出 PPTX
+- 舊的重複專案資料夾 `tax-monitor-git/`
+
+目前 `release/` 只保留三個交付檔：
+
+```text
+release/
+├─ TaxMonitor-Setup.exe
+├─ TaxMonitor-Windows-Installer.zip
+└─ SHA256SUMS.txt
+```
+
+## 一般使用者：一鍵安裝
+
+把這個檔案給使用者：
+
+```text
+release/TaxMonitor-Setup.exe
+```
+
+安裝流程：
+
+1. 雙擊 `TaxMonitor-Setup.exe`
+2. 如果 Windows SmartScreen 提醒未知發行者，確認來源可信後選擇繼續執行
+3. 安裝完成後，桌面會出現 `Tax Monitor` 捷徑
+4. 雙擊捷徑啟動 Tkinter 桌面程式
+
+適用環境：
+
+- Windows 10 / Windows 11
+- 64-bit x86 電腦
+- 一般使用者權限即可安裝到 `%LOCALAPPDATA%\Programs\TaxMonitor`
+
+注意：
+
+- 這不是 macOS / Linux 安裝包
+- 安裝包未做程式碼簽章，公司電腦可能被 IT 原則擋下
+- 本地 LLM 模型不會包進 EXE，因為模型通常數 GB，需要另外下載
+
+## 桌面版使用流程
+
+開啟 `Tax Monitor` 後：
+
+1. 左側 `Search keywords` 輸入公司與風險詞，例如：
+
+```text
+華碩, ASUS, ASUSTeK, transfer pricing, withholding tax, Pillar Two, permanent establishment
+```
+
+2. `Research intent` 輸入研究需求，例如：
+
+```text
+搜尋華碩與旗下子公司在最近 3 個月可能需要注意的跨國稅務風險，包含轉讓訂價、扣繳稅、常設機構、全球最低稅負、稅務稽查與補稅新聞。
+```
+
+3. 建議設定：
+
+```text
+Source: all 或 deep_research
+Period: 3m
+Max results: 30-100
+PPTX limit: 3-10
+LLM provider: ollama
+LLM model: qwen3:8b
+Use AI query expansion: checked
+Use RAG context: checked
+RAG chunks: 4
+Generate PPTX: checked
+```
+
+4. 按 `Run research`
+5. 右側分頁查看 `Summary`、`Search results`、`Documents`、`PPTX`、`Assistant`、`LLM Setup`、`n8n Automation`、`History`
+
+## LLM Setup 分頁
+
+`LLM Setup` 分頁可協助一般使用者設定本地 LLM：
+
+- 檢查是否已安裝 Ollama
+- 用 `winget` 嘗試安裝 Ollama
+- 從清單選模型並執行 `ollama pull`
+- 查看已安裝模型
+
+建議模型：
+
+```text
+qwen3:8b
+```
+
+手動指令：
+
+```powershell
+ollama pull qwen3:8b
+ollama run qwen3:8b
+```
+
+雲端模型不需要下載，只要在左側 API key 欄位輸入，或事先設定 `OPENAI_API_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`。
+
+## Assistant 分頁
+
+如果搜尋結果太少、來源太集中、沒有涵蓋子公司或跨國稅務議題，可以切到 `Assistant`。
+
+範例：
+
+```text
+這次結果太少，請擴大到華碩旗下子公司、英文來源、轉讓訂價、扣繳稅、常設機構、Pillar Two、稅務稽查與補稅相關資料。
+```
+
+Assistant 會回傳下一輪建議，可按 `Apply settings` 或 `Apply + rerun`。
+
+## RAG 增強分析
+
+RAG 預設開啟。它會在分析每篇文件時：
+
+1. 從本機 SQLite 文件庫讀取已匯入文件
+2. 將長文件切成片段
+3. 用 TF-IDF 相似度找出與目前公司、子公司、稅務風險最相關的片段
+4. 把片段放進 LLM prompt，要求模型只把有證據的內容寫進報告
+5. 在 PPTX 中加入 RAG 交叉比對來源
+
+桌面版設定：
+
+```text
+Use RAG cross-document context: checked
+RAG chunks: 4
+```
+
+API 參數：
+
+```json
+{
+  "use_rag_context": true,
+  "rag_top_k": 4
+}
+```
+
+快速驗證 RAG：
+
+```powershell
+.\.venv\Scripts\python.exe -B examples\run_rag_smoke_test.py
+```
+
+成功時會看到：
+
+```text
+rag_chunk_count: 1
+rag_smoke_test: ok
+```
+
+## n8n Automation 分頁
+
+`n8n Automation` 分頁可把目前左側設定轉成 n8n workflow。
+
+建議流程：
+
+1. 左側先設定好搜尋與模型
+2. 到 `n8n Automation`
+3. 按 `Start API server`
+4. 按 `Check API`
+5. 按 `Export n8n JSON`
+6. 到 n8n 匯入 JSON
+
+匯出的 workflow 會呼叫：
+
+```text
+POST http://127.0.0.1:8010/api/pipeline/run
+```
+
+如果使用 n8n Cloud，`127.0.0.1` 會指向 n8n Cloud 自己，不會指向使用者電腦；這時需要把 Tax Monitor API 部署成雲端可連線服務，或用 tunnel 暫時暴露本機 API。
+
+## 開發者：從原始碼啟動
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+啟動 FastAPI：
+
+```powershell
+python -m uvicorn main:app --host 127.0.0.1 --port 8010
+```
+
+啟動 Tkinter 桌面版：
+
+```powershell
+python -m desktop_app
+```
+
+## FastAPI 一次跑完整流程
+
+Endpoint：
+
+```text
+POST /api/pipeline/run
+```
+
+範例 JSON：
+
+```json
+{
+  "keywords": ["華碩", "ASUS", "ASUSTeK", "transfer pricing", "Pillar Two"],
+  "user_prompt": "搜尋華碩及旗下子公司最近 3 個月跨國稅務風險，包含轉讓訂價、扣繳稅、常設機構、全球最低稅負、稅務稽查與補稅新聞。",
+  "mode": "auto",
+  "date_range": "3m",
+  "max_results": 30,
+  "country": null,
+  "industry": "technology",
+  "source_name": "all",
+  "candidate_urls": [],
+  "use_ai_query_expansion": true,
+  "target_language": "zh",
+  "analysis_mode": "translate_first",
+  "provider": "ollama",
+  "model_name": "qwen3:8b",
+  "report_format": "pptx",
+  "max_documents_to_process": 5,
+  "high_risk_only": false,
+  "use_rag_context": true,
+  "rag_top_k": 4
+}
+```
+
+輸出 PPTX 預設會放在：
+
+```text
+data/reports/
+```
+
+## 重新打包 Windows 安裝包
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build_windows_installer.ps1
+```
+
+打包完成後檢查：
+
+```text
+release/TaxMonitor-Setup.exe
+release/TaxMonitor-Windows-Installer.zip
+release/SHA256SUMS.txt
+```
+
+## 清理規則
+
+專案已更新 `.gitignore`，以下內容視為可重建或執行時產物：
+
+- `build/`
+- `dist/`
+- `*.spec`
+- `__pycache__/`
+- `*.pyc`
+- `tax_monitor_runtime.db`
+- `*.db-journal`
+- `data/reports/*`
+- `data/uploads/*`
+- `data/upload_files/*`
+- `upload_files/*`
+
+`release/` 建議只保留：
+
+```text
+TaxMonitor-Setup.exe
+TaxMonitor-Windows-Installer.zip
+SHA256SUMS.txt
+```
+
+日後可用清理腳本重新整理：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\clean_project.ps1 -CleanRuntimeData
+```
+
+## 常見問題
+
+### 打開 Ollama API 出現 405
+
+直接用瀏覽器開 `http://localhost:11434/api/generate` 看到 `405 method not allowed` 是正常的，因為這是 POST API，不是網頁。
+
+### 桌面沒有捷徑
+
+可直接執行：
+
+```text
+%LOCALAPPDATA%\Programs\TaxMonitor\TaxMonitor.exe
+```
+
+或重新執行最新版 `release/TaxMonitor-Setup.exe`。
+
+### 搜尋結果太少
+
+建議：
+
+- `Source` 改成 `all` 或 `deep_research`
+- `Max results` 提高到 50-100
+- 開啟 `Use AI query expansion`
+- 開啟 `Use RAG cross-document context`
+- 到 `Assistant` 說明缺少哪些資料
+- 補上英文公司名、股票代號、子公司名、國家、稅務議題英文詞
+
+---
+
+以下為舊版開發紀錄，僅供追溯。
+
+# è·¨åœ‹æ³•ä»¤èˆ‡ç¨…å‹™é¢¨éšªç›£æ¸¬ç³»çµ±ï¼ˆTax Monitor APIï¼‰
 
 é€™å€‹å°ˆæ¡ˆæ˜¯ä¸€å€‹ä»¥ FastAPI ç‚ºæ ¸å¿ƒçš„ç¨…å‹™ç ”ç©¶èˆ‡é¢¨éšªç›£æ¸¬åŽŸåž‹ï¼Œç›®æ¨™æ˜¯æŠŠï¼š
 

@@ -220,6 +220,8 @@ class PipelineService:
         report_format: str = "pptx",
         max_documents_to_process: int = 3,
         high_risk_only: bool = False,
+        use_rag_context: bool = True,
+        rag_top_k: int = 4,
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -240,6 +242,8 @@ class PipelineService:
             "report_format": report_format,
             "max_documents_to_process": max_documents_to_process,
             "high_risk_only": high_risk_only,
+            "use_rag_context": use_rag_context,
+            "rag_top_k": rag_top_k,
         }
         self._reset_token_counters()
         run_id = self._start_run(run_payload)
@@ -265,6 +269,8 @@ class PipelineService:
                 report_format=report_format,
                 max_documents_to_process=max_documents_to_process,
                 high_risk_only=high_risk_only,
+                use_rag_context=use_rag_context,
+                rag_top_k=rag_top_k,
                 progress_callback=progress_callback,
                 cancel_event=cancel_event,
             )
@@ -318,6 +324,8 @@ class PipelineService:
         report_format: str = "pptx",
         max_documents_to_process: int = 3,
         high_risk_only: bool = False,
+        use_rag_context: bool = True,
+        rag_top_k: int = 4,
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -379,7 +387,10 @@ class PipelineService:
                     use_llm=True,
                     provider=provider,
                     user_prompt=user_prompt,
-                    model_name=model_name
+                    model_name=model_name,
+                    use_rag_context=use_rag_context,
+                    rag_top_k=rag_top_k,
+                    rag_query=" ".join(keywords)
                 )
             except Exception:
                 analysis = await self.analysis_service.analyze_document(
@@ -389,7 +400,10 @@ class PipelineService:
                     use_llm=False,
                     provider=provider,
                     user_prompt=user_prompt,
-                    model_name=model_name
+                    model_name=model_name,
+                    use_rag_context=False,
+                    rag_top_k=0,
+                    rag_query=" ".join(keywords)
                 )
 
             self._emit_progress(
@@ -410,7 +424,10 @@ class PipelineService:
                 provider=provider,
                 model_name=model_name,
                 target_language=target_language,
-                user_prompt=user_prompt
+                user_prompt=user_prompt,
+                use_rag_context=use_rag_context,
+                rag_top_k=rag_top_k,
+                rag_query=" ".join(keywords)
             )
             self._emit_progress(
                 progress_callback,
@@ -426,6 +443,7 @@ class PipelineService:
                 "source_url": item.get("url"),
                 "risk_level": analysis["risk_level"],
                 "risk_tags": analysis.get("risk_tags", []),
+                "rag_source_count": len(analysis.get("rag_context", {}).get("chunks") or []),
                 "report_format": report_format,
                 "report_file_path": report.get("file_path")
             })
@@ -481,6 +499,8 @@ class PipelineService:
         model_name: str = "qwen3:8b",
         max_documents_to_process: int = 3,
         high_risk_only: bool = False,
+        use_rag_context: bool = True,
+        rag_top_k: int = 4,
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -497,6 +517,8 @@ class PipelineService:
             "target_language": target_language,
             "max_documents_to_process": max_documents_to_process,
             "high_risk_only": high_risk_only,
+            "use_rag_context": use_rag_context,
+            "rag_top_k": rag_top_k,
         }
         self._reset_token_counters()
         run_id = self._start_run(run_payload)
@@ -522,6 +544,8 @@ class PipelineService:
                 model_name=model_name,
                 max_documents_to_process=max_documents_to_process,
                 high_risk_only=high_risk_only,
+                use_rag_context=use_rag_context,
+                rag_top_k=rag_top_k,
                 progress_callback=progress_callback,
                 cancel_event=cancel_event,
             )
@@ -575,6 +599,8 @@ class PipelineService:
         model_name: str = "qwen3:8b",
         max_documents_to_process: int = 3,
         high_risk_only: bool = False,
+        use_rag_context: bool = True,
+        rag_top_k: int = 4,
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -641,7 +667,10 @@ class PipelineService:
                         use_llm=True,
                         provider=provider,
                         user_prompt=user_prompt,
-                        model_name=model_name
+                        model_name=model_name,
+                        use_rag_context=use_rag_context,
+                        rag_top_k=rag_top_k,
+                        rag_query=" ".join(normalized_keywords)
                     )
                 except Exception:
                     analysis = await self.analysis_service.analyze_document(
@@ -651,11 +680,15 @@ class PipelineService:
                         use_llm=False,
                         provider=provider,
                         user_prompt=user_prompt,
-                        model_name=model_name
+                        model_name=model_name,
+                        use_rag_context=False,
+                        rag_top_k=0,
+                        rag_query=" ".join(normalized_keywords)
                     )
 
                 document_result["risk_level"] = analysis.get("risk_level")
                 document_result["risk_tags"] = analysis.get("risk_tags", [])
+                document_result["rag_source_count"] = len(analysis.get("rag_context", {}).get("chunks") or [])
 
                 if not high_risk_only or analysis.get("risk_level") == "High":
                     report = await self.report_service.generate_report(
@@ -664,7 +697,10 @@ class PipelineService:
                         provider=provider,
                         model_name=model_name,
                         target_language=target_language,
-                        user_prompt=user_prompt
+                        user_prompt=user_prompt,
+                        use_rag_context=use_rag_context,
+                        rag_top_k=rag_top_k,
+                        rag_query=" ".join(normalized_keywords)
                     )
                     document_result["pptx_file_path"] = report.get("file_path")
                     if report.get("file_path"):

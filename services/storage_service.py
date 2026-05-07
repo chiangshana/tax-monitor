@@ -435,7 +435,11 @@ class StorageService:
         conn = self._connect()
         conn.row_factory = sqlite3.Row
         cur = conn.cursor()
-        cur.execute("SELECT doc_id, title, raw_text FROM documents")
+        cur.execute("""
+            SELECT doc_id, title, raw_text, url, source_type, source_name,
+                   language, country, industry, published_date, created_at, updated_at
+            FROM documents
+        """)
         rows = cur.fetchall()
         if conn is not self._memory_conn:
             conn.close()

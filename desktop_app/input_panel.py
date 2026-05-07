@@ -108,6 +108,8 @@ class InputPanel(ttk.Frame):
         self.generate_pptx = tk.BooleanVar(value=True)
         self.high_risk_only = tk.BooleanVar(value=False)
         self.use_ai_query_expansion = tk.BooleanVar(value=True)
+        self.use_rag_context = tk.BooleanVar(value=True)
+        self.rag_top_k = tk.IntVar(value=4)
         self.max_documents_to_process = tk.IntVar(value=3)
         self.provider = tk.StringVar(value="ollama")
         self.model_name = tk.StringVar(value=PROVIDER_DEFAULT_MODEL["ollama"])
@@ -158,15 +160,19 @@ class InputPanel(ttk.Frame):
         ttk.Checkbutton(self, text="Use AI query expansion (uses selected provider)", variable=self.use_ai_query_expansion).grid(
             row=15, column=0, columnspan=2, sticky="w", pady=(6, 0)
         )
-        ttk.Checkbutton(self, text="Generate PPTX", variable=self.generate_pptx).grid(
+        ttk.Checkbutton(self, text="Use RAG cross-document context", variable=self.use_rag_context).grid(
             row=16, column=0, columnspan=2, sticky="w"
         )
+        self._spinbox("RAG chunks", self.rag_top_k, 0, 10, 17, 0)
+        ttk.Checkbutton(self, text="Generate PPTX", variable=self.generate_pptx).grid(
+            row=17, column=1, sticky="w", padx=(6, 0), pady=(4, 0)
+        )
         ttk.Checkbutton(self, text="Only generate PPTX for high-risk items", variable=self.high_risk_only).grid(
-            row=17, column=0, columnspan=2, sticky="w"
+            row=18, column=1, sticky="w", padx=(6, 0), pady=(4, 0)
         )
 
         button_row = ttk.Frame(self)
-        button_row.grid(row=18, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        button_row.grid(row=20, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         button_row.columnconfigure(0, weight=3)
         button_row.columnconfigure(1, weight=1)
         self.run_button = ttk.Button(button_row, text="Run research", command=self.on_run)
@@ -176,7 +182,7 @@ class InputPanel(ttk.Frame):
 
         self.dark_mode = tk.BooleanVar(value=False)
         ttk.Checkbutton(self, text="Dark mode", variable=self.dark_mode, command=self._on_theme_toggle).grid(
-            row=19, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            row=21, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
 
         self._refresh_api_key_status()
@@ -270,6 +276,8 @@ class InputPanel(ttk.Frame):
             "model_name": model_name,
             "max_documents_to_process": int(self.max_documents_to_process.get()),
             "high_risk_only": bool(self.high_risk_only.get()),
+            "use_rag_context": bool(self.use_rag_context.get()),
+            "rag_top_k": int(self.rag_top_k.get()),
         }
 
     def apply_suggestions(self, suggestion):
@@ -308,6 +316,10 @@ class InputPanel(ttk.Frame):
             self.industry.set(str(suggestion.get("industry") or "").strip())
 
         self.use_ai_query_expansion.set(True)
+        if "use_rag_context" in suggestion:
+            self.use_rag_context.set(bool(suggestion.get("use_rag_context")))
+        if "rag_top_k" in suggestion:
+            self.rag_top_k.set(self._clamp_int(suggestion.get("rag_top_k"), 0, 10, self.rag_top_k.get()))
 
     def _replace_text(self, widget, value):
         widget.delete("1.0", "end")

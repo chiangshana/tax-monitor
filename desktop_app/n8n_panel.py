@@ -297,6 +297,8 @@ class N8nAutomationPanel(ttk.Frame):
             "report_format": "pptx",
             "max_documents_to_process": int(raw.get("max_documents_to_process") or 3),
             "high_risk_only": bool(raw.get("high_risk_only", False)),
+            "use_rag_context": bool(raw.get("use_rag_context", True)),
+            "rag_top_k": int(raw.get("rag_top_k") or 4),
         }
 
     def _drain_queue(self):

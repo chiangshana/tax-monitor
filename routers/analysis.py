@@ -21,7 +21,9 @@ async def run_analysis(request: AnalysisRequest):
             use_llm=request.use_llm,
             provider=request.provider,
             user_prompt=request.user_prompt,
-            model_name=request.model_name
+            model_name=request.model_name,
+            use_rag_context=request.use_rag_context,
+            rag_top_k=request.rag_top_k
         )
         return AnalysisResponse(**result)
     except Exception as e:
@@ -38,7 +40,9 @@ async def generate_report(request: ReportRequest):
             provider=request.provider,
             model_name=request.model_name,
             target_language=request.target_language,
-            user_prompt=request.user_prompt
+            user_prompt=request.user_prompt,
+            use_rag_context=request.use_rag_context,
+            rag_top_k=request.rag_top_k
         )
         return ReportResponse(**result)
     except Exception as e:

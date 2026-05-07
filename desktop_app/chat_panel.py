@@ -122,6 +122,8 @@ class ResearchChatPanel(ttk.Frame):
             "date_range": payload.get("date_range") or "3m",
             "max_results": int(payload.get("max_results") or 50),
             "max_documents_to_process": int(payload.get("max_documents_to_process") or 5),
+            "use_rag_context": True,
+            "rag_top_k": int(payload.get("rag_top_k") or 4),
             "country": payload.get("country") or "",
             "industry": payload.get("industry") or "",
             "should_rerun": True,
@@ -209,6 +211,8 @@ User message:
 
         clean["max_results"] = self._clamp_int(clean.get("max_results"), 1, 100, 50)
         clean["max_documents_to_process"] = self._clamp_int(clean.get("max_documents_to_process"), 1, 10, 5)
+        clean["use_rag_context"] = bool(clean.get("use_rag_context", True))
+        clean["rag_top_k"] = self._clamp_int(clean.get("rag_top_k"), 0, 10, 4)
         clean["suggested_user_prompt"] = str(clean.get("suggested_user_prompt") or "").strip()
         clean["country"] = str(clean.get("country") or "").strip()
         clean["industry"] = str(clean.get("industry") or "").strip()
@@ -253,6 +257,8 @@ User message:
                 f"- date_range: {suggestion.get('date_range')}",
                 f"- max_results: {suggestion.get('max_results')}",
                 f"- max_documents_to_process: {suggestion.get('max_documents_to_process')}",
+                f"- use_rag_context: {suggestion.get('use_rag_context')}",
+                f"- rag_top_k: {suggestion.get('rag_top_k')}",
                 f"- country: {suggestion.get('country') or '(不限)'}",
                 f"- industry: {suggestion.get('industry') or '(不限)'}",
                 "",

@@ -141,14 +141,21 @@ Generate PPTX: checked
 
 ```text
 qwen3:8b
+qwen3.5:9b
+qwen3.5:27b
 ```
 
 手動指令：
 
 ```powershell
 ollama pull qwen3:8b
+ollama pull qwen3.5:9b
+ollama pull qwen3.5:27b
 ollama run qwen3:8b
+ollama run qwen3.5:27b
 ```
+
+`qwen3.5:27b` 下載大小約 17GB，適合記憶體與顯示卡資源較充足的電腦。Ollama 目前常見 tag 是 `qwen3.5:0.8b`、`qwen3.5:2b`、`qwen3.5:4b`、`qwen3.5:9b`、`qwen3.5:27b`、`qwen3.5:35b`、`qwen3.5:122b`；目前沒有獨立的 `qwen3.5:17b` tag。
 
 雲端模型不需要下載，只要在左側 API key 欄位輸入，或事先設定 `OPENAI_API_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`。
 

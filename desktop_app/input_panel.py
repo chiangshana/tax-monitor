@@ -5,6 +5,14 @@ from tkinter import ttk
 
 PROVIDER_MODEL_PRESETS = {
     "ollama": [
+        "qwen3.5:latest",
+        "qwen3.5:0.8b",
+        "qwen3.5:2b",
+        "qwen3.5:4b",
+        "qwen3.5:9b",
+        "qwen3.5:27b",
+        "qwen3.5:35b",
+        "qwen3.5:122b",
         "qwen3:0.6b",
         "qwen3:1.7b",
         "qwen3:4b",

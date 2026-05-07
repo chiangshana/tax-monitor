@@ -74,7 +74,7 @@ class LLMSetupPanel(ttk.Frame):
         path = shutil.which("ollama")
         if not path:
             self.status.set("Ollama is not installed or not on PATH.")
-            self._write("Ollama was not found. Install it first, then pull a model such as qwen3:8b.\n")
+            self._write("Ollama was not found. Install it first, then pull a model such as qwen3:8b or qwen3.5:9b.\n")
             return
 
         server_ok = False

@@ -1,0 +1,144 @@
+{
+  "name": "Tax Monitor - Obsidian Export",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "obsidian-cron",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { keywords: ['tax reform', 'penalty', 'filing obligation'], user_prompt: 'focus on APAC tax updates for internal knowledge base', mode: 'auto', date_range: '7d', max_results: 5, country: 'TW', industry: 'technology', source_name: 'google_news_rss', auto_ingest: true } }];"
+      },
+      "id": "obsidian-prepare-search",
+      "name": "Prepare Search Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        470,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/document/search",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}"
+      },
+      "id": "obsidian-search-api",
+      "name": "Search Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        720,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json.results || [];\nreturn results.filter(item => item.ingested_doc_id).map(item => ({ json: { doc_id: item.ingested_doc_id, source_url: item.url, title: item.title } }));"
+      },
+      "id": "obsidian-extract",
+      "name": "Extract Doc IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "obsidian-batch",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/report",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, output_format: 'obsidian', provider: 'ollama', model_name: 'qwen3:8b', target_language: 'zh', user_prompt: 'prepare an obsidian-ready tax monitoring note' } }}"
+      },
+      "id": "obsidian-report-api",
+      "name": "Generate Obsidian Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1410,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const safeTitle = ($json.title || 'tax-note').replace(/[\\\\/:*?\"<>|]/g, '-');\nreturn [{ json: { fileName: `${safeTitle}.md`, content: $json.content, title: $json.title, metadata: $json.metadata } }];"
+      },
+      "id": "obsidian-prepare-file",
+      "name": "Prepare Markdown File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1650,
+        260
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger": {
+      "main": [[{ "node": "Prepare Search Payload", "type": "main", "index": 0 }]]
+    },
+    "Prepare Search Payload": {
+      "main": [[{ "node": "Search Documents", "type": "main", "index": 0 }]]
+    },
+    "Search Documents": {
+      "main": [[{ "node": "Extract Doc IDs", "type": "main", "index": 0 }]]
+    },
+    "Extract Doc IDs": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    },
+    "Split In Batches": {
+      "main": [[{ "node": "Generate Obsidian Report", "type": "main", "index": 0 }]]
+    },
+    "Generate Obsidian Report": {
+      "main": [[{ "node": "Prepare Markdown File", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "tax-monitor-obsidian-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "tax-monitor-obsidian-workflow"
+}

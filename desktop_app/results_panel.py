@@ -1,13 +1,20 @@
 import tkinter as tk
 from tkinter import ttk
 
+from desktop_app.chat_panel import ResearchChatPanel
+from desktop_app.llm_setup_panel import LLMSetupPanel
+from desktop_app.n8n_panel import N8nAutomationPanel
 from services.storage_service import StorageService
 
 
 class ResultsPanel(ttk.Frame):
-    def __init__(self, master):
+    def __init__(self, master, get_payload=None, on_apply_recommendation=None, on_apply_and_run=None):
         super().__init__(master, padding=12)
         self._storage = StorageService()
+        self._get_payload = get_payload or (lambda: {})
+        self._on_apply_recommendation = on_apply_recommendation or (lambda _suggestion: None)
+        self._on_apply_and_run = on_apply_and_run or (lambda: None)
+        self._last_result = {}
         self._build()
 
     def _build(self):
@@ -24,6 +31,18 @@ class ResultsPanel(ttk.Frame):
         self.search_text = self._text_tab("Search results")
         self.document_text = self._text_tab("Documents")
         self.pptx_text = self._text_tab("PPTX")
+        self.chat_panel = ResearchChatPanel(
+            self.notebook,
+            get_payload=self._get_payload,
+            get_result=lambda: self._last_result,
+            on_apply=self._on_apply_recommendation,
+            on_apply_and_run=self._on_apply_and_run,
+        )
+        self.notebook.add(self.chat_panel, text="Assistant")
+        self.llm_setup_panel = LLMSetupPanel(self.notebook)
+        self.notebook.add(self.llm_setup_panel, text="LLM Setup")
+        self.n8n_panel = N8nAutomationPanel(self.notebook, get_payload=self._get_payload)
+        self.notebook.add(self.n8n_panel, text="n8n Automation")
         self.history_text = self._build_history_tab()
         self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
@@ -164,6 +183,7 @@ class ResultsPanel(ttk.Frame):
         return f"{kind}"
 
     def render_result(self, result):
+        self._last_result = result or {}
         self._write(self.summary_text, self._format_summary(result))
         self._write(self.search_text, self._format_search_results(result.get("search_results", [])))
         self._write(self.document_text, self._format_documents(result.get("documents", [])))

@@ -76,6 +76,9 @@ PROVIDER_DEFAULT_MODEL = {
     "gemini": "gemini-2.5-flash",
 }
 
+SOURCE_OPTIONS = ["deep_research", "duckduckgo", "bing_web", "all", "google_news_rss_global", "google_news_rss"]
+DATE_RANGE_OPTIONS = ["7d", "1m", "3m", "6m", "1y"]
+
 
 class InputPanel(ttk.Frame):
     def __init__(self, master, on_run):
@@ -114,11 +117,11 @@ class InputPanel(ttk.Frame):
         self._combo(
             "Source",
             self.source_name,
-            ["deep_research", "duckduckgo", "bing_web", "all", "google_news_rss_global", "google_news_rss"],
+            SOURCE_OPTIONS,
             4,
             0,
         )
-        self._combo("Period", self.date_range, ["7d", "1m", "3m", "6m", "1y"], 4, 1)
+        self._combo("Period", self.date_range, DATE_RANGE_OPTIONS, 4, 1)
         self._spinbox("Max results", self.max_results, 1, 100, 6, 0)
         self._spinbox("PPTX limit", self.max_documents_to_process, 1, 10, 6, 1)
         self._entry("Country", self.country, 8, 0)
@@ -268,6 +271,54 @@ class InputPanel(ttk.Frame):
             "max_documents_to_process": int(self.max_documents_to_process.get()),
             "high_risk_only": bool(self.high_risk_only.get()),
         }
+
+    def apply_suggestions(self, suggestion):
+        """Apply LLM research assistant suggestions to the search form."""
+        if not isinstance(suggestion, dict):
+            return
+
+        keywords = suggestion.get("suggested_keywords") or suggestion.get("keywords") or []
+        if isinstance(keywords, str):
+            keywords = [part.strip() for part in keywords.replace("，", ",").split(",") if part.strip()]
+        if keywords:
+            self._replace_text(self.keywords, ", ".join(str(item).strip() for item in keywords if str(item).strip()))
+
+        user_prompt = suggestion.get("suggested_user_prompt") or suggestion.get("user_prompt")
+        if user_prompt:
+            self._replace_text(self.user_prompt, str(user_prompt).strip())
+
+        source_name = str(suggestion.get("source_name") or "").strip()
+        if source_name in SOURCE_OPTIONS:
+            self.source_name.set(source_name)
+
+        date_range = str(suggestion.get("date_range") or "").strip()
+        if date_range in DATE_RANGE_OPTIONS:
+            self.date_range.set(date_range)
+
+        if "max_results" in suggestion:
+            self.max_results.set(self._clamp_int(suggestion.get("max_results"), 1, 100, self.max_results.get()))
+        if "max_documents_to_process" in suggestion:
+            self.max_documents_to_process.set(
+                self._clamp_int(suggestion.get("max_documents_to_process"), 1, 10, self.max_documents_to_process.get())
+            )
+
+        if "country" in suggestion:
+            self.country.set(str(suggestion.get("country") or "").strip())
+        if "industry" in suggestion:
+            self.industry.set(str(suggestion.get("industry") or "").strip())
+
+        self.use_ai_query_expansion.set(True)
+
+    def _replace_text(self, widget, value):
+        widget.delete("1.0", "end")
+        widget.insert("1.0", value)
+
+    def _clamp_int(self, value, minimum, maximum, default):
+        try:
+            number = int(value)
+        except (TypeError, ValueError, tk.TclError):
+            number = int(default)
+        return max(minimum, min(maximum, number))
 
     def _parse_keywords(self, raw):
         separators = [",", "，", ";", "；", "|", "\n"]

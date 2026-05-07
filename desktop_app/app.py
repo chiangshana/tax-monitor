@@ -76,7 +76,12 @@ class TaxMonitorDesktopApp(tk.Tk):
         self.input_panel = InputPanel(self, on_run=self._run)
         self.input_panel.grid(row=0, column=0, sticky="nsw")
 
-        self.results_panel = ResultsPanel(self)
+        self.results_panel = ResultsPanel(
+            self,
+            get_payload=self.input_panel.get_payload,
+            on_apply_recommendation=self.input_panel.apply_suggestions,
+            on_apply_and_run=self._run,
+        )
         self.results_panel.grid(row=0, column=1, sticky="nsew")
 
         self.worker = PipelineWorker(
@@ -88,6 +93,9 @@ class TaxMonitorDesktopApp(tk.Tk):
         self.input_panel.bind_stop_handler(self._cancel)
 
     def _run(self):
+        if hasattr(self, "worker") and self.worker.is_running():
+            messagebox.showinfo("Already running", "A research run is already in progress.")
+            return
         payload = self.input_panel.get_payload()
         if not payload["keywords"]:
             messagebox.showwarning("Missing keywords", "Please enter at least one search keyword.")

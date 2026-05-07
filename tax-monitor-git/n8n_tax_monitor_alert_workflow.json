@@ -1,0 +1,192 @@
+{
+  "name": "Tax Monitor - High Risk Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "id": "alert-cron",
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        250,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { keywords: ['tax reform', 'penalty', 'audit', 'compliance'], user_prompt: 'detect high-risk tax updates and notify stakeholders', mode: 'auto', date_range: '7d', max_results: 5, country: 'TW', industry: 'technology', source_name: 'google_news_rss', auto_ingest: true } }];"
+      },
+      "id": "alert-prepare-search",
+      "name": "Prepare Search Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        490,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/document/search",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}"
+      },
+      "id": "alert-search-api",
+      "name": "Search Documents",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        750,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $json.results || [];\nreturn results.filter(item => item.ingested_doc_id).map(item => ({ json: { doc_id: item.ingested_doc_id, source_url: item.url, title: item.title } }));"
+      },
+      "id": "alert-extract",
+      "name": "Extract Doc IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1000,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "alert-batch",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/run",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, mode: 'translate_first', target_language: 'zh', use_llm: true, provider: 'ollama', model_name: 'qwen3:8b', user_prompt: 'prepare a concise alert summary with effective date and penalty focus' } }}"
+      },
+      "id": "alert-analyze",
+      "name": "Analyze Document",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1450,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.risk_level }}",
+              "operation": "equal",
+              "value2": "High"
+            }
+          ]
+        }
+      },
+      "id": "alert-if",
+      "name": "If High Risk",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:8010/api/analysis/report",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ { doc_id: $json.doc_id, output_format: 'slides', provider: 'ollama', model_name: 'qwen3:8b', target_language: 'zh', user_prompt: 'prepare a short executive alert version' } }}"
+      },
+      "id": "alert-report",
+      "name": "Generate Alert Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1910,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const risk = $json.metadata?.risk_level || 'unknown';\nconst title = $json.title || 'Tax Monitor Alert';\nconst body = `High risk tax update detected\\n\\nTitle: ${title}\\nRisk: ${risk}\\n\\n${$json.content}`;\nreturn [{ json: { subject: `[Tax Monitor] High Risk - ${title}`, message: body, title, risk_level: risk } }];"
+      },
+      "id": "alert-prepare-message",
+      "name": "Prepare Alert Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2140,
+        160
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger": {
+      "main": [[{ "node": "Prepare Search Payload", "type": "main", "index": 0 }]]
+    },
+    "Prepare Search Payload": {
+      "main": [[{ "node": "Search Documents", "type": "main", "index": 0 }]]
+    },
+    "Search Documents": {
+      "main": [[{ "node": "Extract Doc IDs", "type": "main", "index": 0 }]]
+    },
+    "Extract Doc IDs": {
+      "main": [[{ "node": "Split In Batches", "type": "main", "index": 0 }]]
+    },
+    "Split In Batches": {
+      "main": [[{ "node": "Analyze Document", "type": "main", "index": 0 }]]
+    },
+    "Analyze Document": {
+      "main": [[{ "node": "If High Risk", "type": "main", "index": 0 }]]
+    },
+    "If High Risk": {
+      "main": [
+        [{ "node": "Generate Alert Report", "type": "main", "index": 0 }],
+        []
+      ]
+    },
+    "Generate Alert Report": {
+      "main": [[{ "node": "Prepare Alert Message", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "tax-monitor-alert-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "id": "tax-monitor-alert-workflow"
+}

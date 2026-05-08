@@ -26,6 +26,9 @@ def user_data_root() -> Path:
 
 
 def data_dir() -> Path:
+    override = os.getenv("TAX_MONITOR_DATA_DIR")
+    if override:
+        return Path(override)
     if is_frozen_app():
         return user_data_root() / "data"
     return PROJECT_ROOT / "data"

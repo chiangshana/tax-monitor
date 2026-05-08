@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 import base64
 import itertools
+import os
 import re
 import threading
 import time
@@ -908,6 +909,7 @@ class SearchService:
 
     def _build_http_session(self) -> requests.Session:
         session = requests.Session()
+        session.trust_env = os.getenv("TAX_MONITOR_TRUST_PROXY", "").lower() in ("1", "true", "yes")
         if Retry is not None:
             retry = Retry(
                 total=2,

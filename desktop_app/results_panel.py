@@ -214,6 +214,19 @@ class ResultsPanel(ttk.Frame):
             "",
             model.get("message", ""),
         ]
+        ingest_errors = result.get("ingest_errors", [])
+        if result.get("searched_result_count", 0) and not result.get("ingested_result_count", 0):
+            lines.extend([
+                "",
+                "Search worked, but every document failed during download/ingestion.",
+                "Most common causes: blocked PDF, stale Windows proxy, network timeout, or website anti-bot protection.",
+            ])
+        if ingest_errors:
+            lines.extend(["", "First ingestion errors:"])
+            for item in ingest_errors[:5]:
+                lines.append(f"- {item.get('title', '')}")
+                lines.append(f"  URL: {item.get('url', '')}")
+                lines.append(f"  Error: {item.get('error', '')}")
         return "\n".join(lines)
 
     def _format_search_results(self, results):

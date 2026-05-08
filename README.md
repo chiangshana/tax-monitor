@@ -316,6 +316,22 @@ data/reports/
 
 執行過程若看到 `Ingest phase done: N documents`，代表搜尋與匯入已完成，接下來會進入 LLM 分析與 PPTX 產生。新版桌面版會繼續顯示 `Analyzing...`、`Generating pptx report...`、`Report ready...` 等狀態；若舊版畫面停在 ingest 階段但資料夾已有新 `.pptx`，通常是 UI 進度未更新，請換用新版安裝包。
 
+若 `Search results` 有數字但 `Ingested` 是 0，通常代表網址找得到、但文件下載被擋住。常見原因是 Windows 環境變數裡有壞掉的 proxy，例如：
+
+```powershell
+HTTP_PROXY=http://127.0.0.1:9
+HTTPS_PROXY=http://127.0.0.1:9
+ALL_PROXY=http://127.0.0.1:9
+```
+
+新版 Tax Monitor 預設會忽略這類環境 proxy，讓公開網站可直接下載。若公司內網真的必須走 proxy，再手動設定：
+
+```powershell
+$env:TAX_MONITOR_TRUST_PROXY = "1"
+```
+
+桌面版 Summary 也會顯示前幾筆匯入錯誤，方便判斷是網站封鎖、PDF 下載失敗、網路逾時，還是 proxy 問題。
+
 ## 重新打包 Windows 安裝包
 
 ```powershell

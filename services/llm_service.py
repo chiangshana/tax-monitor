@@ -166,6 +166,8 @@ class LLMService:
             text, usage = self._call_gemini(prompt, model_name)
         elif provider_lower == "claude":
             text, usage = self._call_claude(prompt, model_name)
+        elif provider_lower in ("qwen", "dashscope"):
+            text, usage = self._call_qwen(prompt, model_name)
         else:
             raise ValueError(f"Unsupported provider: {provider}")
         self._record_usage(
@@ -218,6 +220,39 @@ class LLMService:
             "input_tokens": int(u.get("prompt_tokens") or 0),
             "output_tokens": int(u.get("completion_tokens") or 0),
             "cache_read_tokens": int(((u.get("prompt_tokens_details") or {}).get("cached_tokens")) or 0),
+        }
+        return text, usage
+
+    def _call_qwen(self, prompt: str, model_name: str) -> Tuple[str, Dict[str, int]]:
+        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY")
+        if not api_key:
+            raise ValueError("Missing environment variable: DASHSCOPE_API_KEY")
+
+        base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+        endpoint = base_url.rstrip("/") + "/chat/completions"
+        response = requests.post(
+            endpoint,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "Return concise, valid JSON only when asked."},
+                    {"role": "user", "content": prompt}
+                ],
+                "temperature": 0.2
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+        body = response.json()
+        text = body["choices"][0]["message"].get("content", "")
+        u = body.get("usage") or {}
+        usage = {
+            "input_tokens": int(u.get("prompt_tokens") or 0),
+            "output_tokens": int(u.get("completion_tokens") or 0),
         }
         return text, usage
 

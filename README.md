@@ -20,7 +20,7 @@ Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完�
 - Tkinter 桌面版可輸入關鍵字、補充需求、期間、資料筆數上限與來源
 - 搜尋層支援 `all` / `deep_research`，可用 DuckDuckGo、Bing、Google News、官方頁、SEC/IR/sitemap 等來源補強
 - 文件匯入後會訓練關鍵字模型
-- 分析與 PPTX 輸出可用 Ollama 或 OpenAI / Gemini / Claude API
+- 分析與 PPTX 輸出可用 Ollama 或 OpenAI / Gemini / Claude / Qwen Cloud API
 - n8n 分頁可依目前設定匯出自動化 workflow
 - 新增 RAG：分析每篇文件時會從本機已匯入資料庫抓相關片段，作為 LLM 交叉比對背景
 
@@ -157,7 +157,23 @@ ollama run qwen3.5:27b
 
 `qwen3.5:27b` 下載大小約 17GB，適合記憶體與顯示卡資源較充足的電腦。Ollama 目前常見 tag 是 `qwen3.5:0.8b`、`qwen3.5:2b`、`qwen3.5:4b`、`qwen3.5:9b`、`qwen3.5:27b`、`qwen3.5:35b`、`qwen3.5:122b`；目前沒有獨立的 `qwen3.5:17b` tag。
 
-雲端模型不需要下載，只要在左側 API key 欄位輸入，或事先設定 `OPENAI_API_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`。
+雲端模型不需要下載，只要在左側 API key 欄位輸入，或事先設定 `OPENAI_API_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`、`DASHSCOPE_API_KEY`。
+
+Qwen Cloud / Alibaba Model Studio 適合想用 `qwen3.6-plus`、`qwen3.6-max-preview`、`qwen-max`、`qwen-max-latest`、`qwen3.5-397b-a17b` 這類雲端模型的情境。桌面版請選：
+
+```text
+LLM provider: qwen
+LLM model: qwen3.6-plus
+API key: 貼上 DASHSCOPE_API_KEY
+```
+
+若你的 DashScope 帳號綁定特定區域，可用環境變數覆蓋 API base URL：
+
+```powershell
+$env:DASHSCOPE_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+```
+
+`max` 與 `3.6` 系列是雲端 API 模型，不會出現在 `LLM Setup` 的 Ollama 安裝清單；本機安裝仍請使用 `qwen3:8b`、`qwen3.5:9b`、`qwen3.5:27b` 等 Ollama tag。
 
 ## Assistant 分頁
 
@@ -1511,6 +1527,7 @@ POST /api/pipeline/run
 | `claude` | `claude-sonnet-4-6` | claude-opus-4-7ã€claude-sonnet-4-6ã€claude-haiku-4-5-20251001ã€claude-3-7-sonnet-latestã€claude-3-5-sonnet-latestã€claude-3-5-haiku-latestã€claude-3-opus-latest |
 | `openai` | `gpt-4o-mini` | gpt-4oã€gpt-4o-miniã€gpt-4.1ã€gpt-4.1-miniã€gpt-4.1-nanoã€gpt-4-turboã€gpt-3.5-turboã€o1ã€o1-miniã€o3-mini |
 | `gemini` | `gemini-2.5-flash` | gemini-2.5-proã€gemini-2.5-flashã€gemini-2.0-flashã€gemini-2.0-flash-liteã€gemini-1.5-proã€gemini-1.5-flash |
+| `qwen` | `qwen3.6-plus` | qwen3.6-plusã€qwen3.6-max-previewã€qwen-maxã€qwen-max-latestã€qwen-plusã€qwen-turboã€qwen3.5-397b-a17b |
 
 å…©å€‹ä¸‹æ‹‰çš†ç‚º `ttk.Combobox`ï¼š
 
@@ -1523,13 +1540,13 @@ POST /api/pipeline/run
 
 ä¸‹æ–¹çš„ `API key (optional, overrides env var for this session)` æ˜¯ä¸€å€‹é®ç½©è¼¸å…¥æ¬„ã€‚æµç¨‹ï¼š
 
-1. åˆ‡åˆ° `claude` / `openai` / `gemini` ä»»ä¸€ provider
+1. åˆ‡åˆ° `claude` / `openai` / `gemini` / `qwen` ä»»ä¸€ provider
 2. åœ¨ API key æ¬„è²¼å…¥é‡‘é‘°
 3. æŒ‰ `Run research`
 
-æ¡Œé¢ç‰ˆæœƒåœ¨é€å‡º payload ä¹‹å‰ `os.environ[env_var] = key`ï¼Œæ‰€ä»¥ `services/llm_service.py` çš„ `_call_claude` / `_call_openai` / `_call_gemini` å¯ä»¥é€éŽ `_require_env(...)` æ‹¿åˆ°ã€‚é‡‘é‘°åªå­˜åœ¨æ–¼ç›®å‰ process è¨˜æ†¶é«”ï¼Œä¸æœƒå¯«å…¥ç£ç¢Ÿï¼Œè¦–çª—é—œé–‰å°±æ¶ˆå¤±ã€‚
+æ¡Œé¢ç‰ˆæœƒåœ¨é€å‡º payload ä¹‹å‰ `os.environ[env_var] = key`ï¼Œæ‰€ä»¥ `services/llm_service.py` çš„ `_call_claude` / `_call_openai` / `_call_gemini` / `_call_qwen` å¯ä»¥é€éŽç›¸å°æ‡‰çš„ç’°å¢ƒè®Šæ•¸æ‹¿åˆ°ã€‚é‡‘é‘°åªå­˜åœ¨æ–¼ç›®å‰ process è¨˜æ†¶é«”ï¼Œä¸æœƒå¯«å…¥ç£ç¢Ÿï¼Œè¦–çª—é—œé–‰å°±æ¶ˆå¤±ã€‚
 
-å¦‚æžœ API key æ¬„ç•™ç©ºï¼Œå‰‡å›žé€€ä½¿ç”¨ shell / ç³»çµ±å±¤ç´šçš„ç’°å¢ƒè®Šæ•¸ï¼ˆ`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY`ï¼‰ã€‚ä¾›æ‡‰å•†æ—é‚Šæœƒé¡¯ç¤ºä¸€è¡Œç‹€æ…‹æç¤ºï¼š
+å¦‚æžœ API key æ¬„ç•™ç©ºï¼Œå‰‡å›žé€€ä½¿ç”¨ shell / ç³»çµ±å±¤ç´šçš„ç’°å¢ƒè®Šæ•¸ï¼ˆ`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `GEMINI_API_KEY` / `DASHSCOPE_API_KEY`ï¼‰ã€‚ä¾›æ‡‰å•†æ—é‚Šæœƒé¡¯ç¤ºä¸€è¡Œç‹€æ…‹æç¤ºï¼š
 
 - ç¶ è‰²ï¼šã€Œ`OPENAI_API_KEY` detected. Ready to call openai.ã€
 - ç´…è‰²ï¼šã€Œ`OPENAI_API_KEY` is not set. Set it in your shell before launching to call openai.ã€
@@ -1537,14 +1554,15 @@ POST /api/pipeline/run
 
 ### 17.3 å°æ‡‰çš„ Provider è·¯ç”±
 
-`services/llm_service.py` å·²å…§å»ºå››å€‹ä¾›æ‡‰å•†å‘¼å«å™¨ï¼Œç¾åœ¨æ¡Œé¢ç‰ˆåªæ˜¯æŠŠé¸æ“‡æ¬Šæš´éœ²çµ¦ä½¿ç”¨è€…ï¼š
+`services/llm_service.py` å·²å…§å»ºäº”å€‹ä¾›æ‡‰å•†å‘¼å«å™¨ï¼Œç¾åœ¨æ¡Œé¢ç‰ˆåªæ˜¯æŠŠé¸æ“‡æ¬Šæš´éœ²çµ¦ä½¿ç”¨è€…ï¼š
 
 - `_call_ollama` â†’ `http://localhost:11434/api/generate`
 - `_call_openai` â†’ `https://api.openai.com/v1/chat/completions`
 - `_call_gemini` â†’ `https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 - `_call_claude` â†’ `https://api.anthropic.com/v1/messages`ï¼ˆ`anthropic-version: 2023-06-01`ï¼‰
+- `_call_qwen` â†’ `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions`ï¼ˆå¯ç”¨ `DASHSCOPE_BASE_URL` è¦†å¯«ï¼‰
 
-æ‰€ä»¥å¾žæ¡Œé¢ç‰ˆé¸ `claude` + `claude-opus-4-7`ï¼ŒAI query expansionã€`AnalysisService` çš„ LLM æ‘˜è¦ã€`ReportService` çš„ç°¡å ±å…§å®¹ç”Ÿæˆéƒ½æœƒèµ° Claudeã€‚
+æ‰€ä»¥å¾žæ¡Œé¢ç‰ˆé¸ `claude` + `claude-opus-4-7`ï¼Œæˆ– `qwen` + `qwen3.6-plus` / `qwen3.6-max-preview` / `qwen-max-latest`ï¼ŒAI query expansionã€`AnalysisService` çš„ LLM æ‘˜è¦ã€`ReportService` çš„ç°¡å ±å…§å®¹ç”Ÿæˆéƒ½æœƒèµ°åŒä¸€çµ„ provider/modelã€‚
 
 ### 17.4 é †å¸¶å„ªåŒ–çš„æ•ˆèƒ½é …ç›®
 
@@ -1581,7 +1599,7 @@ POST /api/pipeline/run
 }
 ```
 
-åªè¦ç’°å¢ƒè®Šæ•¸ `ANTHROPIC_API_KEY` å·²è¨­å®šï¼Œæ•´æ¢ pipelineï¼ˆæœå°‹æ“´å¯«ã€é¢¨éšªåˆ†æžã€PPTX å…§å®¹ï¼‰éƒ½æœƒäº¤çµ¦ Claudeã€‚æ›æˆ `provider: "openai", model_name: "gpt-4o"` æˆ– `provider: "gemini", model_name: "gemini-2.5-pro"` ä¹Ÿæ˜¯åŒä¸€å€‹å¯«æ³•ã€‚
+åªè¦ç’°å¢ƒè®Šæ•¸ `ANTHROPIC_API_KEY` å·²è¨­å®šï¼Œæ•´æ¢ pipelineï¼ˆæœå°‹æ“´å¯«ã€é¢¨éšªåˆ†æžã€PPTX å…§å®¹ï¼‰éƒ½æœƒäº¤çµ¦ Claudeã€‚æ›æˆ `provider: "openai", model_name: "gpt-4o"`ã€`provider: "gemini", model_name: "gemini-2.5-pro"`ï¼Œæˆ– `provider: "qwen", model_name: "qwen3.6-plus"` ä¹Ÿæ˜¯åŒä¸€å€‹å¯«æ³•ã€‚
 
 ---
 
@@ -2331,7 +2349,7 @@ TaxMonitor-Windows-Installer\
   TaxMonitor\              # PyInstaller 打包後的桌面程式
 ```
 
-雲端 LLM（OpenAI / Gemini / Claude）不需要安裝模型；只要在左側輸入 API key，或事先設定環境變數 `OPENAI_API_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`。
+雲端 LLM（OpenAI / Gemini / Claude / Qwen Cloud）不需要安裝模型；只要在左側輸入 API key，或事先設定環境變數 `OPENAI_API_KEY`、`GEMINI_API_KEY`、`ANTHROPIC_API_KEY`、`DASHSCOPE_API_KEY`。
 
 ### 24.4 Tkinter 桌面版研究助理
 

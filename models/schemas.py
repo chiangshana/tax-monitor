@@ -73,7 +73,7 @@ class AnalysisRequest(BaseModel):
     mode: str = Field(default="translate_first", pattern="^(translate_first|analyze_first)$")
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
     use_llm: bool = False
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
     user_prompt: Optional[str] = None
     use_rag_context: bool = True
@@ -130,7 +130,7 @@ class SearchRequest(BaseModel):
     candidate_urls: List[str] = Field(default_factory=list)
     auto_ingest: bool = True
     use_ai_query_expansion: bool = True
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
 
 
@@ -159,7 +159,7 @@ class KeywordTrainRequest(BaseModel):
     user_keywords: List[str] = Field(default_factory=list)
     risk_labels: List[str] = Field(default_factory=list)
     user_prompt: Optional[str] = None
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
 
 
@@ -179,7 +179,7 @@ class SlideSection(BaseModel):
 class ReportRequest(BaseModel):
     doc_id: str = Field(..., min_length=1)
     output_format: str = Field(default="obsidian", pattern="^(obsidian|slides|pptx|markdown)$")
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
     user_prompt: Optional[str] = None
@@ -200,7 +200,7 @@ class ReportResponse(BaseModel):
 class EvaluationRequest(BaseModel):
     doc_id: str = Field(..., min_length=1)
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
     compare_mode: str = Field(default="rule_vs_llm", pattern="^(rule_vs_llm)$")
     user_prompt: Optional[str] = None
@@ -232,7 +232,7 @@ class PipelineRunRequest(BaseModel):
     use_ai_query_expansion: bool = True
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
     analysis_mode: str = Field(default="translate_first", pattern="^(translate_first|analyze_first)$")
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
     report_format: str = Field(default="pptx", pattern="^(obsidian|slides|pptx|markdown)$")
     max_documents_to_process: int = Field(default=3, ge=1, le=10)
@@ -278,7 +278,7 @@ class SearchTrainRequest(BaseModel):
     use_ai_query_expansion: bool = True
     generate_pptx: bool = True
     target_language: str = Field(default="zh", pattern="^(zh|en)$")
-    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude)$")
+    provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
     max_documents_to_process: int = Field(default=3, ge=1, le=10)
     high_risk_only: bool = False

@@ -68,6 +68,15 @@ PROVIDER_MODEL_PRESETS = {
         "gemini-1.5-pro",
         "gemini-1.5-flash",
     ],
+    "qwen": [
+        "qwen3.6-plus",
+        "qwen3.6-max-preview",
+        "qwen-max",
+        "qwen-max-latest",
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen3.5-397b-a17b",
+    ],
 }
 
 PROVIDER_API_KEY_ENV = {
@@ -75,6 +84,7 @@ PROVIDER_API_KEY_ENV = {
     "claude": "ANTHROPIC_API_KEY",
     "openai": "OPENAI_API_KEY",
     "gemini": "GEMINI_API_KEY",
+    "qwen": "DASHSCOPE_API_KEY",
 }
 
 PROVIDER_DEFAULT_MODEL = {
@@ -82,6 +92,7 @@ PROVIDER_DEFAULT_MODEL = {
     "claude": "claude-sonnet-4-6",
     "openai": "gpt-4o-mini",
     "gemini": "gemini-2.5-flash",
+    "qwen": "qwen3.6-plus",
 }
 
 SOURCE_OPTIONS = ["deep_research", "duckduckgo", "bing_web", "all", "google_news_rss_global", "google_news_rss"]

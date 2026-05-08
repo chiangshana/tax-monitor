@@ -63,7 +63,7 @@ class LLMSetupPanel(ttk.Frame):
         scroll.grid(row=3, column=1, sticky="ns")
 
         self._write(
-            "Cloud models such as OpenAI, Gemini, and Claude are not installed locally. "
+            "Cloud models such as OpenAI, Gemini, Claude, and Qwen Cloud are not installed locally. "
             "They use API keys in the left panel. This tab installs Ollama models only.\n\n"
         )
 

@@ -1059,7 +1059,7 @@ class SearchService:
         return True
 
     def _candidate_limit(self, max_results: int) -> int:
-        return min(120, max(25, max_results * 3))
+        return min(250, max(40, max_results * 4))
 
     def _search_google_news_rss(self, query: str, window: Dict[str, datetime], max_results: int) -> List[Dict]:
         when_clause = self._build_google_news_when(window)
@@ -1388,6 +1388,19 @@ class SearchService:
                     break
             if len(merged_items) >= candidate_limit:
                 break
+
+        if source_name == "all" and len(merged_items) < candidate_limit:
+            prf_queries = self._pseudo_relevance_feedback(
+                seed_results=merged_items,
+                keywords=keywords,
+                user_prompt=user_prompt,
+            )
+            follow_up_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = []
+            for prf_query in prf_queries[:10]:
+                follow_up_tasks.append((self._search_duckduckgo_html, (prf_query, max_results)))
+                follow_up_tasks.append((self._search_bing_web, (prf_query, max_results)))
+                follow_up_tasks.append((self._search_google_news_rss, (prf_query, window, max_results)))
+            self._run_parallel_searches(follow_up_tasks, candidate_limit, merged_items, seen_urls)
 
         return merged_items
 
@@ -2829,8 +2842,9 @@ Requirements:
             return []
         results = []
         seen_urls = set()
+        scan_limit = max(max_results * 4, max_results)
         keyword_pattern = re.compile(
-            r"(annual|sustain|esg|tax|investor|ir/|financial|report|governance|risk|"
+            r"(annual|sustain|esg|tax|investor|(?:^|/)ir(?:/|_|-)|financial|report|governance|risk|"
             r"年報|永續|稅|財報|投資人|關係|報告|公司治理|風險)",
             re.IGNORECASE,
         )
@@ -2881,6 +2895,9 @@ Requirements:
                                 continue
                             if not keyword_pattern.search(inner_value):
                                 continue
+                            sitemap_score = self._score_company_sitemap_url(inner_value)
+                            if sitemap_score < 1.0:
+                                continue
                             seen_urls.add(inner_value)
                             results.append({
                                 "title": f"{domain} sitemap entry: {inner_value.rsplit('/', 1)[-1] or inner_value}",
@@ -2892,12 +2909,15 @@ Requirements:
                                 ),
                                 "source": "company_sitemap",
                                 "published_at": None,
-                                "relevance_score": 0.0,
+                                "relevance_score": sitemap_score,
                             })
-                            if len(results) >= max_results:
-                                return results
+                            if len(results) >= scan_limit:
+                                return self._sort_company_sitemap_results(results, max_results)
                         continue
                     if not keyword_pattern.search(loc_value):
+                        continue
+                    sitemap_score = self._score_company_sitemap_url(loc_value)
+                    if sitemap_score < 1.0:
                         continue
                     seen_urls.add(loc_value)
                     results.append({
@@ -2910,13 +2930,87 @@ Requirements:
                         ),
                         "source": "company_sitemap",
                         "published_at": None,
-                        "relevance_score": 0.0,
+                        "relevance_score": sitemap_score,
                     })
-                    if len(results) >= max_results:
-                        return results
+                    if len(results) >= scan_limit:
+                        return self._sort_company_sitemap_results(results, max_results)
                 if results:
                     break
-        return results
+        return self._sort_company_sitemap_results(results, max_results)
+
+    def _sort_company_sitemap_results(self, results: List[Dict], max_results: int) -> List[Dict]:
+        return sorted(results, key=lambda item: item.get("relevance_score", 0.0), reverse=True)[:max_results]
+
+    def _score_company_sitemap_url(self, url: str) -> float:
+        lowered = unquote(url or "").lower()
+        score = 0.0
+        high_value_terms = (
+            "investor",
+            "/ir",
+            "ir_",
+            "annual",
+            "financial",
+            "report",
+            "attachment",
+            "governance",
+            "sustainability",
+            "esg",
+            "tax",
+            "shareholder",
+            "stock",
+            "subsidiar",
+            "related-party",
+            "related%20party",
+            "財報",
+            "年報",
+            "投資",
+            "公司治理",
+            "永續",
+            "稅",
+            "關係",
+        )
+        strong_terms = (
+            "investor",
+            "annual_report",
+            "annual-report",
+            "financial-report",
+            "ir_report",
+            "attachment",
+            "corporate_governance",
+            "sustainability",
+            ".pdf",
+        )
+        product_terms = (
+            "/store",
+            "asus-store",
+            "/shop",
+            "/laptops",
+            "/motherboards",
+            "/monitors",
+            "/graphics-cards",
+            "/phones",
+            "/networking",
+            "/accessories",
+            "/support",
+            "/product",
+            "/review",
+            "gaming",
+            "tuf",
+            "rog",
+            "zenbook",
+            "vivobook",
+            "chromebook",
+            "router",
+            "mouse",
+            "keyboard",
+            "where-to-buy",
+        )
+        score += sum(1.2 for term in high_value_terms if term in lowered)
+        score += sum(1.8 for term in strong_terms if term in lowered)
+        product_penalty = sum(1.4 for term in product_terms if term in lowered)
+        if product_penalty and score < 5.0:
+            score -= product_penalty
+        return score
 
     def _safe_search_call(self, search_func, *args) -> List[Dict]:
         source_name = getattr(search_func, "__name__", "unknown")
@@ -3066,7 +3160,57 @@ Requirements:
 
     def _should_skip_result_url(self, url: str) -> bool:
         domain = self._extract_domain(url)
-        return domain in self.LOW_SIGNAL_DOMAINS
+        return domain in self.LOW_SIGNAL_DOMAINS or self._is_low_value_product_url(url)
+
+    def _is_low_value_product_url(self, url: str) -> bool:
+        lowered = unquote(url or "").lower()
+        high_value_terms = (
+            "investor",
+            "annual",
+            "financial",
+            "report",
+            "governance",
+            "sustainability-report",
+            "esg-report",
+            "tax",
+            "shareholder",
+            "subsidiar",
+            "related-party",
+            "attachment",
+            ".pdf",
+            "財報",
+            "年報",
+            "投資",
+            "公司治理",
+            "稅",
+        )
+        product_terms = (
+            "/store",
+            "asus-store",
+            "/shop",
+            "/support",
+            "/download",
+            "/laptops",
+            "/motherboards",
+            "/monitors",
+            "/graphics-cards",
+            "/phones",
+            "/networking",
+            "/accessories",
+            "/product",
+            "/review",
+            "gaming",
+            "tuf",
+            "rog",
+            "zenbook",
+            "vivobook",
+            "chromebook",
+            "router",
+            "mouse",
+            "keyboard",
+            "where-to-buy",
+        )
+        return any(term in lowered for term in product_terms) and not any(term in lowered for term in high_value_terms)
 
     def _fetch_google_news_feed(self, url: str, max_results: int, source_name: str) -> List[Dict]:
         response = self._cached_request("GET", url)
@@ -3224,6 +3368,13 @@ Requirements:
                 result["relevance_score"] = min(result["relevance_score"], 6.4)
             if event_intent and result.get("source") == "official_domain_seed" and tax_event_hits == 0:
                 result["relevance_score"] = min(result["relevance_score"], 4.8)
+            if (
+                result.get("source") in {"sec_edgar", "edinet_jp", "dart_kr"}
+                and has_company_focus
+                and alias_hits == 0
+                and domain_alias_bonus == 0
+            ):
+                result["relevance_score"] = min(result["relevance_score"], 0.5)
 
         return sorted(results, key=lambda item: item["relevance_score"], reverse=True)
 

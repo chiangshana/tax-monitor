@@ -154,6 +154,10 @@ class ResultsPanel(ttk.Frame):
             return f"Skipped (precheck): {(event.get('url') or '')[:80]}"
         if kind == "ingest_phase_completed":
             return f"Ingest phase done: {event.get('ingested', 0)} documents"
+        if kind == "embedded_ingest_phase_started":
+            return f"Following embedded document links: {event.get('total', 0)} candidates"
+        if kind == "embedded_ingest_phase_completed":
+            return f"Embedded document ingest done: {event.get('ingested', 0)} extra documents"
         if kind == "analysis_started":
             return f"Analyzing #{event.get('index', '?')}: {(event.get('title') or '')[:80]}"
         if kind == "analysis_fallback":
@@ -208,6 +212,7 @@ class ResultsPanel(ttk.Frame):
             f"Keywords: {', '.join(result.get('normalized_keywords', []))}",
             f"Search results: {result.get('searched_result_count', 0)}",
             f"Ingested: {result.get('ingested_result_count', 0)}",
+            f"Embedded links followed: {result.get('embedded_result_count', 0)}",
             f"PPTX generated: {result.get('generated_report_count', 0)}",
             f"Training documents: {model.get('document_count', 0)}",
             f"Vocabulary size: {model.get('vocabulary_size', 0)}",

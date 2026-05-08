@@ -345,6 +345,50 @@ class StorageService:
             runs.append(data)
         return runs
 
+    def clear_runtime_data(
+        self,
+        documents: bool = False,
+        keyword_profiles: bool = False,
+        pipeline_runs: bool = False,
+    ) -> Dict:
+        """Clear selected runtime tables without deleting the database file."""
+        deleted = {"documents": 0, "keyword_profiles": 0, "pipeline_runs": 0}
+
+        def operation():
+            conn = self._connect()
+            cur = conn.cursor()
+            if documents:
+                try:
+                    cur.execute("SELECT COUNT(*) FROM documents")
+                    deleted["documents"] = cur.fetchone()[0]
+                except sqlite3.OperationalError:
+                    deleted["documents"] = 0
+                cur.execute("DELETE FROM documents")
+                try:
+                    cur.execute("DELETE FROM documents_fts")
+                except sqlite3.OperationalError:
+                    pass
+            if keyword_profiles:
+                try:
+                    cur.execute("SELECT COUNT(*) FROM keyword_profiles")
+                    deleted["keyword_profiles"] = cur.fetchone()[0]
+                except sqlite3.OperationalError:
+                    deleted["keyword_profiles"] = 0
+                cur.execute("DELETE FROM keyword_profiles")
+            if pipeline_runs:
+                try:
+                    cur.execute("SELECT COUNT(*) FROM pipeline_runs")
+                    deleted["pipeline_runs"] = cur.fetchone()[0]
+                except sqlite3.OperationalError:
+                    deleted["pipeline_runs"] = 0
+                cur.execute("DELETE FROM pipeline_runs")
+            conn.commit()
+            if conn is not self._memory_conn:
+                conn.close()
+
+        self._retry_on_readonly(operation)
+        return deleted
+
     def get_pipeline_run(self, run_id: str) -> Optional[Dict]:
         conn = self._connect()
         conn.row_factory = sqlite3.Row

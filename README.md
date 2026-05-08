@@ -113,9 +113,9 @@ release/TaxMonitor-Setup.exe
 3. 建議設定：
 
 ```text
-Source: all 或 deep_research
+Source: deep_research（預設）或 all
 Period: 3m
-Max results: 30-100
+Max results: 30-200
 PPTX limit: 3-10
 LLM provider: ollama
 LLM model: qwen3:8b
@@ -125,8 +125,14 @@ RAG chunks: 4
 Generate PPTX: checked
 ```
 
-4. 按 `Run research`
-5. 右側分頁查看 `Summary`、`Search results`、`Documents`、`PPTX`、`Assistant`、`LLM Setup`、`n8n Automation`、`History`
+4. 若想重跑乾淨資料，可勾選 `Clear selected data before this run`，再選擇清除：
+   - `Documents + keyword model`
+   - `Run history`
+   - `Generated PPTX/reports`
+5. 按 `Run research`
+6. 右側分頁查看 `Summary`、`Search results`、`Documents`、`PPTX`、`Assistant`、`LLM Setup`、`n8n Automation`、`History`
+
+桌面版現在會在匯入第一輪網頁後，自動追蹤頁面中的年報、財報、PDF、投資人關係與治理文件連結，並做第二輪匯入；Summary 會顯示 `Embedded links followed`。
 
 ## LLM Setup 分頁
 

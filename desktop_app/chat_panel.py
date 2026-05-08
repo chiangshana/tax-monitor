@@ -118,7 +118,7 @@ class ResearchChatPanel(ttk.Frame):
             "reply": "我會幫你擴大下一輪搜尋，並補上更精準的風險詞。",
             "suggested_keywords": payload.get("keywords") or [],
             "suggested_user_prompt": payload.get("user_prompt") or "",
-            "source_name": payload.get("source_name") or "all",
+            "source_name": payload.get("source_name") or "deep_research",
             "date_range": payload.get("date_range") or "3m",
             "max_results": int(payload.get("max_results") or 50),
             "max_documents_to_process": int(payload.get("max_documents_to_process") or 5),
@@ -203,13 +203,13 @@ User message:
             keywords = [part.strip() for part in keywords.replace("，", ",").split(",") if part.strip()]
         clean["suggested_keywords"] = [str(item).strip() for item in keywords if str(item).strip()][:20]
 
-        source_name = str(clean.get("source_name") or "all").strip()
-        clean["source_name"] = source_name if source_name in self.SOURCE_OPTIONS else "all"
+        source_name = str(clean.get("source_name") or "deep_research").strip()
+        clean["source_name"] = source_name if source_name in self.SOURCE_OPTIONS else "deep_research"
 
         date_range = str(clean.get("date_range") or "3m").strip()
         clean["date_range"] = date_range if date_range in self.DATE_RANGE_OPTIONS else "3m"
 
-        clean["max_results"] = self._clamp_int(clean.get("max_results"), 1, 100, 50)
+        clean["max_results"] = self._clamp_int(clean.get("max_results"), 1, 200, 50)
         clean["max_documents_to_process"] = self._clamp_int(clean.get("max_documents_to_process"), 1, 10, 5)
         clean["use_rag_context"] = bool(clean.get("use_rag_context", True))
         clean["rag_top_k"] = self._clamp_int(clean.get("rag_top_k"), 0, 10, 4)

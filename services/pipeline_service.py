@@ -574,6 +574,7 @@ class PipelineService:
             "run_completed",
             run_id=run_id,
             ingested=response.get("ingested_result_count"),
+            processed=response.get("generated_report_count"),
             cost=cost_summary,
         )
         return response
@@ -659,6 +660,14 @@ class PipelineService:
             }
 
             if generate_pptx and generated_report_count < max_documents_to_process:
+                progress_index = len(ingested_documents) + 1
+                self._emit_progress(
+                    progress_callback,
+                    "analysis_started",
+                    index=progress_index,
+                    doc_id=doc_summary["doc_id"],
+                    title=doc_summary.get("title"),
+                )
                 try:
                     analysis = await self.analysis_service.analyze_document(
                         doc_id=doc_summary["doc_id"],
@@ -672,7 +681,14 @@ class PipelineService:
                         rag_top_k=rag_top_k,
                         rag_query=" ".join(normalized_keywords)
                     )
-                except Exception:
+                except Exception as exc:
+                    self._emit_progress(
+                        progress_callback,
+                        "analysis_fallback",
+                        index=progress_index,
+                        doc_id=doc_summary["doc_id"],
+                        error=str(exc),
+                    )
                     analysis = await self.analysis_service.analyze_document(
                         doc_id=doc_summary["doc_id"],
                         mode="translate_first",
@@ -689,8 +705,22 @@ class PipelineService:
                 document_result["risk_level"] = analysis.get("risk_level")
                 document_result["risk_tags"] = analysis.get("risk_tags", [])
                 document_result["rag_source_count"] = len(analysis.get("rag_context", {}).get("chunks") or [])
+                self._emit_progress(
+                    progress_callback,
+                    "analysis_completed",
+                    index=progress_index,
+                    doc_id=doc_summary["doc_id"],
+                    risk_level=analysis.get("risk_level"),
+                )
 
                 if not high_risk_only or analysis.get("risk_level") == "High":
+                    self._emit_progress(
+                        progress_callback,
+                        "report_started",
+                        index=progress_index,
+                        doc_id=doc_summary["doc_id"],
+                        format="pptx",
+                    )
                     report = await self.report_service.generate_report(
                         doc_id=doc_summary["doc_id"],
                         output_format="pptx",
@@ -705,6 +735,13 @@ class PipelineService:
                     document_result["pptx_file_path"] = report.get("file_path")
                     if report.get("file_path"):
                         generated_report_count += 1
+                    self._emit_progress(
+                        progress_callback,
+                        "report_completed",
+                        index=progress_index,
+                        doc_id=doc_summary["doc_id"],
+                        file_path=report.get("file_path"),
+                    )
 
             ingested_documents.append(document_result)
 

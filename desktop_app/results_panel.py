@@ -156,6 +156,8 @@ class ResultsPanel(ttk.Frame):
             return f"Ingest phase done: {event.get('ingested', 0)} documents"
         if kind == "analysis_started":
             return f"Analyzing #{event.get('index', '?')}: {(event.get('title') or '')[:80]}"
+        if kind == "analysis_fallback":
+            return f"LLM analysis fallback for #{event.get('index', '?')}: {(event.get('error') or '')[:120]}"
         if kind == "analysis_completed":
             return f"Analysis #{event.get('index', '?')} done: risk={event.get('risk_level', 'n/a')}"
         if kind == "report_started":

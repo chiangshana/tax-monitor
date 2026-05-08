@@ -6,6 +6,7 @@ from typing import Dict, List
 from services.analysis_service import AnalysisService
 from services.document_service import DocumentService
 from services.llm_service import LLMService
+from services.runtime_paths import output_dir
 
 try:
     from pptx import Presentation
@@ -20,8 +21,8 @@ from datetime import datetime
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-REPORT_DIR = BASE_DIR / "data" / "reports"
-FALLBACK_REPORT_DIR = BASE_DIR / "reports"
+REPORT_DIR = output_dir("reports")
+FALLBACK_REPORT_DIR = output_dir("reports")
 TEMP_REPORT_DIR = Path(tempfile.gettempdir()) / "tax_monitor_reports"
 
 

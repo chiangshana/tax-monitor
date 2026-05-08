@@ -308,6 +308,14 @@ POST /api/pipeline/run
 data/reports/
 ```
 
+如果是使用 `release/TaxMonitor-Setup.exe` 安裝後的桌面版，輸出會放在使用者資料夾：
+
+```text
+%LOCALAPPDATA%\TaxMonitor\data\reports\
+```
+
+執行過程若看到 `Ingest phase done: N documents`，代表搜尋與匯入已完成，接下來會進入 LLM 分析與 PPTX 產生。新版桌面版會繼續顯示 `Analyzing...`、`Generating pptx report...`、`Report ready...` 等狀態；若舊版畫面停在 ingest 階段但資料夾已有新 `.pptx`，通常是 UI 進度未更新，請換用新版安裝包。
+
 ## 重新打包 Windows 安裝包
 
 ```powershell

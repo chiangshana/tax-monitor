@@ -4,10 +4,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from services.runtime_paths import data_dir
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DB_PATH = BASE_DIR / "data" / "tax_monitor.db"
-FALLBACK_DB_PATH = BASE_DIR / "tax_monitor_runtime.db"
+DB_PATH = data_dir() / "tax_monitor.db"
+FALLBACK_DB_PATH = data_dir() / "tax_monitor_runtime.db"
 MEMORY_DB_URI = "file:tax_monitor_shared?mode=memory&cache=shared"
 
 
@@ -24,9 +26,7 @@ class StorageService:
         self._sync_shared_state()
 
     def _resolve_db_path(self) -> Path:
-        if DB_PATH.exists():
-            return DB_PATH
-        return FALLBACK_DB_PATH
+        return DB_PATH
 
     def _init_db(self):
         try:

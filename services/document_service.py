@@ -13,12 +13,13 @@ from fastapi import UploadFile
 from services.document_parser_service import DocumentParserService
 from services.keyword_service import KeywordService
 from services.language_service import LanguageService
+from services.runtime_paths import output_dir
 from services.storage_service import StorageService
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-UPLOAD_DIR = BASE_DIR / "data" / "uploads"
-FALLBACK_UPLOAD_DIR = BASE_DIR / "data" / "upload_files"
+UPLOAD_DIR = output_dir("uploads")
+FALLBACK_UPLOAD_DIR = output_dir("upload_files")
 SECONDARY_UPLOAD_DIR = BASE_DIR / "upload_files"
 TEMP_UPLOAD_DIR = Path(tempfile.gettempdir()) / "tax_monitor_uploads"
 

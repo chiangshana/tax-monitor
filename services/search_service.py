@@ -26,6 +26,7 @@ from services.llm_service import LLMService
 class SearchService:
     SEARCH_TIMEOUT_SECONDS = 8
     DEEP_FETCH_TIMEOUT_SECONDS = 12
+    PARALLEL_SEARCH_BATCH_TIMEOUT_SECONDS = 35
     CACHE_TTL_SECONDS = 600
     CACHE_MAX_ENTRIES = 256
     POLITE_UA_POOL = (
@@ -1172,7 +1173,7 @@ class SearchService:
     ) -> List[Dict]:
         merged: List[Dict] = []
         seen_urls: set = set()
-        candidate_limit = self._candidate_limit(max_results)
+        candidate_limit = max(1, max_results)
         aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
         query_variants = self._merge_query_variants(
             keywords=keywords,
@@ -1195,6 +1196,8 @@ class SearchService:
 
         for item in self._build_seed_results(keywords=keywords, user_prompt=user_prompt):
             self._append_unique_result(merged, seen_urls, item)
+        if len(merged) >= candidate_limit:
+            return merged
 
         jurisdictions = self._detect_jurisdictions(keywords=keywords, user_prompt=user_prompt)
 
@@ -2842,19 +2845,26 @@ Requirements:
             return []
         results = []
         seen_urls = set()
-        scan_limit = max(max_results * 4, max_results)
+        scan_limit = min(max(max_results * 2, max_results), 40)
+        sitemap_scan_deadline = time.monotonic() + 8
+        scanned_locations = 0
+        scanned_nested_sitemaps = 0
         keyword_pattern = re.compile(
             r"(annual|sustain|esg|tax|investor|(?:^|/)ir(?:/|_|-)|financial|report|governance|risk|"
             r"年報|永續|稅|財報|投資人|關係|報告|公司治理|風險)",
             re.IGNORECASE,
         )
 
-        for domain in domains[:5]:
+        for domain in domains[:3]:
+            if time.monotonic() >= sitemap_scan_deadline:
+                break
             for sitemap_url in (
                 f"https://{domain}/sitemap.xml",
                 f"https://{domain}/sitemap_index.xml",
                 f"https://www.{domain}/sitemap.xml",
             ):
+                if time.monotonic() >= sitemap_scan_deadline:
+                    break
                 try:
                     response = self._cached_request(
                         "GET",
@@ -2877,7 +2887,16 @@ Requirements:
                     loc_value = (url_node.text or "").strip()
                     if not loc_value or loc_value in seen_urls:
                         continue
+                    scanned_locations += 1
+                    if scanned_locations > 250 or time.monotonic() >= sitemap_scan_deadline:
+                        return self._sort_company_sitemap_results(results, max_results)
                     if loc_value.lower().endswith(".xml"):
+                        sitemap_score_hint = self._score_company_sitemap_url(loc_value)
+                        if sitemap_score_hint < 1.0:
+                            continue
+                        scanned_nested_sitemaps += 1
+                        if scanned_nested_sitemaps > 8:
+                            continue
                         try:
                             inner_response = self._cached_request(
                                 "GET",
@@ -2893,6 +2912,9 @@ Requirements:
                             inner_value = (inner_loc.text or "").strip()
                             if not inner_value or inner_value in seen_urls:
                                 continue
+                            scanned_locations += 1
+                            if scanned_locations > 250 or time.monotonic() >= sitemap_scan_deadline:
+                                return self._sort_company_sitemap_results(results, max_results)
                             if not keyword_pattern.search(inner_value):
                                 continue
                             sitemap_score = self._score_company_sitemap_url(inner_value)
@@ -3055,9 +3077,10 @@ Requirements:
         if not tasks:
             return False
         max_workers = min(self.PARALLEL_FETCH_WORKERS, max(2, len(tasks)))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(self._safe_search_call, fn, *args) for fn, args in tasks]
-            for future in as_completed(futures):
+        executor = ThreadPoolExecutor(max_workers=max_workers)
+        futures = [executor.submit(self._safe_search_call, fn, *args) for fn, args in tasks]
+        try:
+            for future in as_completed(futures, timeout=self.PARALLEL_SEARCH_BATCH_TIMEOUT_SECONDS):
                 try:
                     items = future.result() or []
                 except Exception:
@@ -3067,7 +3090,14 @@ Requirements:
                 if len(merged) >= candidate_limit:
                     for pending in futures:
                         pending.cancel()
+                    executor.shutdown(wait=False, cancel_futures=True)
                     return True
+        except TimeoutError:
+            for pending in futures:
+                pending.cancel()
+            executor.shutdown(wait=False, cancel_futures=True)
+            return len(merged) >= candidate_limit
+        executor.shutdown(wait=False, cancel_futures=True)
         return False
 
     def _dedup_by_title_similarity(self, results: List[Dict], threshold: float = 0.7) -> List[Dict]:

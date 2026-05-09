@@ -16,6 +16,7 @@ class TaxMonitorDesktopApp(tk.Tk):
         self.minsize(980, 620)
         self._configure_style()
         self._build()
+        self._mark_previous_interrupted_runs()
 
     LIGHT_THEME = {
         "bg": "#f5f7fb",
@@ -93,6 +94,14 @@ class TaxMonitorDesktopApp(tk.Tk):
             on_cancelled=lambda message: self.after(0, self._handle_cancelled, message),
         )
         self.input_panel.bind_stop_handler(self._cancel)
+
+    def _mark_previous_interrupted_runs(self):
+        try:
+            updated = StorageService().mark_stale_running_runs()
+        except Exception:
+            updated = 0
+        if updated:
+            self.results_panel.set_status(f"Recovered {updated} interrupted run(s) from the previous session.")
 
     def _run(self):
         if hasattr(self, "worker") and self.worker.is_running():

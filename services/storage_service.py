@@ -345,6 +345,33 @@ class StorageService:
             runs.append(data)
         return runs
 
+    def mark_stale_running_runs(self) -> int:
+        """Mark runs left open by a previous app shutdown as interrupted."""
+        finished_at = datetime.now().isoformat(timespec="seconds")
+        message = "Interrupted by a previous app shutdown."
+        updated = 0
+
+        def operation():
+            nonlocal updated
+            conn = self._connect()
+            cur = conn.cursor()
+            cur.execute("SELECT COUNT(*) FROM pipeline_runs WHERE status = 'running'")
+            updated = cur.fetchone()[0]
+            cur.execute(
+                """
+                UPDATE pipeline_runs
+                SET finished_at = ?, status = 'interrupted', error = ?
+                WHERE status = 'running'
+                """,
+                (finished_at, message),
+            )
+            conn.commit()
+            if conn is not self._memory_conn:
+                conn.close()
+
+        self._retry_on_readonly(operation)
+        return updated
+
     def clear_runtime_data(
         self,
         documents: bool = False,

@@ -1,6 +1,6 @@
 # Tax Monitor 交付版快速指南
 
-最後整理日期：2026-05-08
+最後整理日期：2026-05-09
 
 Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完成：
 
@@ -23,6 +23,9 @@ Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完�
 - 分析與 PPTX 輸出可用 Ollama 或 OpenAI / Gemini / Claude / Qwen Cloud API
 - n8n 分頁可依目前設定匯出自動化 workflow
 - 新增 RAG：分析每篇文件時會從本機已匯入資料庫抓相關片段，作為 LLM 交叉比對背景
+- `deep_research` 已調整為 demo 友善模式：先回傳官方年報、財報、關係人交易與公司治理等高品質種子來源，避免在 sitemap / 多搜尋來源階段長時間看似卡住。
+- 桌面版啟動時會把前一次非正常關閉留下的 `running` 歷史紀錄標記為 `interrupted`。
+- `requirements.txt` 已補上 `cryptography`，可解析更多使用 AES 加密格式的 PDF。
 
 仍需注意：
 
@@ -643,6 +646,7 @@ python -m pip install -r requirements.txt
 - `requests`
 - `beautifulsoup4`
 - `pypdf`
+- `cryptography`
 - `scikit-learn`
 - `pandas`
 - `python-pptx`

@@ -5,6 +5,7 @@ pydantic
 requests
 beautifulsoup4
 pypdf
+cryptography
 scikit-learn
 pandas
 python-pptx

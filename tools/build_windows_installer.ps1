@@ -107,7 +107,8 @@ $installPs1 = @(
     "Write-Host ''",
     "Write-Host 'Tax Monitor installed successfully.' -ForegroundColor Green",
     "Write-Host `"Installed to: `$target`"",
-    "Write-Host 'For local LLM analysis, install Ollama and run: ollama pull qwen3:8b'"
+    "Write-Host 'Open Tax Monitor from the desktop shortcut, then use LLM Setup > One-click setup selected model.'",
+    "Write-Host 'The app can find/install Ollama, start the local service, and pull the selected model.'"
 )
 Set-Content -LiteralPath (Join-Path $InstallerDir "install.ps1") -Encoding UTF8 -Value $installPs1
 
@@ -153,10 +154,13 @@ $installReadme = @(
     "1. Extract TaxMonitor-Windows-Installer.zip.",
     "2. Run install.bat.",
     "",
-    "Local LLM requirement:",
-    "Install Ollama separately and run:",
+    "Local LLM setup:",
+    "Open Tax Monitor from the desktop shortcut.",
+    "Go to LLM Setup.",
+    "Choose a model.",
+    "Click One-click setup selected model.",
     "",
-    "ollama pull qwen3:8b",
+    "The app can find/install Ollama, start the local service, and pull the selected model.",
     "",
     "This package is unsigned. Windows SmartScreen may show an unknown publisher warning."
 )

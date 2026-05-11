@@ -143,7 +143,8 @@ Generate PPTX: checked
 
 - 檢查是否已安裝 Ollama
 - 用 `winget` 嘗試安裝 Ollama
-- 從清單選模型並執行 `ollama pull`
+- 從清單選模型，按 `One-click setup selected model`
+- 一鍵流程會嘗試：尋找或安裝 Ollama → 啟動本地服務 → 執行 `ollama pull`
 - 也可直接按 `Qwen 3 8B`、`Qwen 3.5 9B`、`Qwen 3.5 27B` 快速安裝按鈕
 - 查看已安裝模型
 
@@ -2347,6 +2348,7 @@ release\TaxMonitor-Windows-Installer.zip
 - 檢查本機是否已安裝 Ollama
 - 用 `winget` 嘗試安裝 Ollama
 - 從清單選擇並下載 Ollama 模型，例如 `qwen3:8b`
+- 按 `One-click setup selected model`，讓使用者不用輸入指令就能安裝所選模型
 - 使用快速按鈕一鍵安裝 `qwen3:8b`、`qwen3.5:9b` 或 `qwen3.5:27b`
 - 查看本機已安裝模型
 

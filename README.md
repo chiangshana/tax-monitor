@@ -345,6 +345,14 @@ $env:TAX_MONITOR_TRUST_PROXY = "1"
 
 ## 重新打包 Windows 安裝包
 
+若安裝版出現 `Could not find a suitable TLS CA certificate bundle`，代表安裝包內缺少 `certifi/cacert.pem`。新版打包腳本會把憑證檔放進：
+
+```text
+%LOCALAPPDATA%\Programs\TaxMonitor\_internal\certifi\cacert.pem
+```
+
+重新打包並重新安裝後，可修正 HTTPS 網站與 PDF 下載失敗的問題。
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build_windows_installer.ps1
 ```

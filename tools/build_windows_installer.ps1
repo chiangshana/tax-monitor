@@ -5,12 +5,18 @@
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
+$env:PYTHONIOENCODING = "utf-8"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $ProjectRoot
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Python executable not found: $Python"
+}
+
+$CertifiBundle = (& $Python -c "import certifi; print(certifi.where())").Trim()
+if (-not (Test-Path -LiteralPath $CertifiBundle)) {
+    throw "certifi CA bundle not found: $CertifiBundle"
 }
 
 $ReleaseRoot = Join-Path $ProjectRoot "release"
@@ -38,9 +44,11 @@ Write-Host "==> Building Tkinter desktop app with PyInstaller..."
     --collect-submodules pandas `
     --collect-submodules pptx `
     --collect-submodules routers `
+    --collect-data certifi `
     --hidden-import pypdf `
     --hidden-import main `
     --hidden-import uvicorn `
+    --add-data "$CertifiBundle;certifi" `
     --add-data "$ProjectRoot\ui;ui" `
     --add-data "$ProjectRoot\examples;examples" `
     --add-data "$ProjectRoot\n8n_tax_monitor_workflow.json;." `

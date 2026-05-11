@@ -203,7 +203,17 @@ class LLMSetupPanel(ttk.Frame):
                     )
                     return
                 self._queue.put("Ollama was not found. Installing Ollama with winget...\n")
-                self._run_subprocess(["winget", "install", "--id", "Ollama.Ollama", "-e"])
+                self._run_subprocess(
+                    [
+                        "winget",
+                        "install",
+                        "--id",
+                        "Ollama.Ollama",
+                        "-e",
+                        "--accept-source-agreements",
+                        "--accept-package-agreements",
+                    ]
+                )
                 ollama = self._ollama_executable()
                 if not ollama:
                     self._queue.put(

@@ -24,7 +24,7 @@ class LLMSetupPanel(ttk.Frame):
 
     def _build(self):
         self.columnconfigure(0, weight=1)
-        self.rowconfigure(3, weight=1)
+        self.rowconfigure(4, weight=1)
 
         header = ttk.Frame(self)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
@@ -50,8 +50,27 @@ class LLMSetupPanel(ttk.Frame):
         self.model_box.grid(row=0, column=1, sticky="ew", padx=(8, 8))
         ttk.Button(controls, text="Pull model", command=self.pull_selected_model).grid(row=0, column=2)
 
+        quick = ttk.Frame(self)
+        quick.grid(row=3, column=0, sticky="ew", pady=(0, 8))
+        ttk.Label(quick, text="Quick Qwen install").pack(side="left")
+        ttk.Button(
+            quick,
+            text="Qwen 3 8B",
+            command=lambda: self.pull_quick_model("qwen3:8b"),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            quick,
+            text="Qwen 3.5 9B",
+            command=lambda: self.pull_quick_model("qwen3.5:9b"),
+        ).pack(side="left", padx=(8, 0))
+        ttk.Button(
+            quick,
+            text="Qwen 3.5 27B",
+            command=lambda: self.pull_quick_model("qwen3.5:27b"),
+        ).pack(side="left", padx=(8, 0))
+
         actions = ttk.Frame(self)
-        actions.grid(row=4, column=0, sticky="ew", pady=(8, 0))
+        actions.grid(row=5, column=0, sticky="ew", pady=(8, 0))
         ttk.Button(actions, text="Install Ollama with winget", command=self.install_ollama_with_winget).pack(side="left")
         ttk.Button(actions, text="Open Ollama download page", command=self.open_ollama_download).pack(side="left", padx=(8, 0))
         ttk.Button(actions, text="Refresh installed models", command=self.list_models).pack(side="left", padx=(8, 0))
@@ -59,8 +78,8 @@ class LLMSetupPanel(ttk.Frame):
         self.output = tk.Text(self, wrap="word", height=18)
         scroll = ttk.Scrollbar(self, command=self.output.yview)
         self.output.configure(yscrollcommand=scroll.set)
-        self.output.grid(row=3, column=0, sticky="nsew")
-        scroll.grid(row=3, column=1, sticky="ns")
+        self.output.grid(row=4, column=0, sticky="nsew")
+        scroll.grid(row=4, column=1, sticky="ns")
 
         self._write(
             "Cloud models such as OpenAI, Gemini, Claude, and Qwen Cloud are not installed locally. "
@@ -103,6 +122,10 @@ class LLMSetupPanel(ttk.Frame):
         if not model:
             messagebox.showwarning("Missing model", "Please choose or type an Ollama model name.")
             return
+        self._run_command(f"ollama pull {model}", ["ollama", "pull", model])
+
+    def pull_quick_model(self, model: str):
+        self.model_name.set(model)
         self._run_command(f"ollama pull {model}", ["ollama", "pull", model])
 
     def install_ollama_with_winget(self):

@@ -14,6 +14,7 @@ from services.document_parser_service import DocumentParserService
 from services.keyword_service import KeywordService
 from services.language_service import LanguageService
 from services.runtime_paths import output_dir
+from services.search_service import SearchService
 from services.storage_service import StorageService
 
 
@@ -25,6 +26,9 @@ TEMP_UPLOAD_DIR = Path(tempfile.gettempdir()) / "tax_monitor_uploads"
 
 MAX_RAW_TEXT_CHARS = 600_000
 MAX_FETCH_BYTES = 25 * 1024 * 1024
+
+TAX_FOCUS_LOW_THRESHOLD = 2
+TAX_FOCUS_HIGH_THRESHOLD = 6
 
 
 class DocumentService:
@@ -48,6 +52,7 @@ class DocumentService:
                 message="Identical document already ingested; reusing existing record.",
                 existing=existing,
                 embedded_links=[],
+                raw_text=raw_text,
             )
         document = self._build_document(
             title=file.filename,
@@ -66,6 +71,7 @@ class DocumentService:
             title=document["title"],
             text=document["raw_text"]
         )
+        focus_score, focus_label = self._compute_tax_focus(raw_text)
 
         return {
             "message": "Document uploaded successfully.",
@@ -81,7 +87,9 @@ class DocumentService:
                 "updated_at": document.get("updated_at")
             },
             "extracted_keywords": keywords,
-            "embedded_document_links": []
+            "embedded_document_links": [],
+            "tax_focus_score": focus_score,
+            "tax_focus_label": focus_label
         }
 
     async def process_url(
@@ -105,6 +113,7 @@ class DocumentService:
                 message="Identical content already ingested; reusing existing record.",
                 existing=existing,
                 embedded_links=embedded_links,
+                raw_text=raw_text,
             )
 
         document = self._build_document(
@@ -127,6 +136,7 @@ class DocumentService:
             title=document["title"],
             text=document["raw_text"]
         )
+        focus_score, focus_label = self._compute_tax_focus(raw_text)
 
         return {
             "message": "Web content ingested successfully.",
@@ -142,7 +152,9 @@ class DocumentService:
                 "updated_at": document.get("updated_at")
             },
             "extracted_keywords": keywords,
-            "embedded_document_links": embedded_links
+            "embedded_document_links": embedded_links,
+            "tax_focus_score": focus_score,
+            "tax_focus_label": focus_label
         }
 
     def list_documents(self, **filters):
@@ -194,11 +206,19 @@ class DocumentService:
             return ""
         return hashlib.sha256(normalized.encode("utf-8", errors="ignore")).hexdigest()
 
-    def _duplicate_response(self, message: str, existing: dict, embedded_links: list) -> dict:
+    def _duplicate_response(
+        self,
+        message: str,
+        existing: dict,
+        embedded_links: list,
+        raw_text: str = None,
+    ) -> dict:
         keywords = self.keyword_service.extract_keywords_for_document(
             title=existing.get("title") or "",
             text=existing.get("raw_text") or "",
         )
+        focus_source = raw_text if raw_text is not None else (existing.get("raw_text") or "")
+        focus_score, focus_label = self._compute_tax_focus(focus_source)
         return {
             "message": message,
             "document": {
@@ -215,7 +235,48 @@ class DocumentService:
             "extracted_keywords": keywords,
             "embedded_document_links": embedded_links,
             "deduplicated": True,
+            "tax_focus_score": focus_score,
+            "tax_focus_label": focus_label,
         }
+
+    def _compute_tax_focus(self, raw_text: str):
+        if not raw_text:
+            return 0.0, "low"
+        haystack = raw_text.lower()
+        keyphrase_hits = sum(
+            1
+            for phrase in SearchService.TAX_KEYPHRASES
+            if phrase.lower() in haystack
+        )
+        event_hits = sum(
+            1
+            for phrase in SearchService.TAX_RISK_EVENT_TOPICS
+            if phrase.lower() in haystack
+        )
+        sampling_hits = sum(
+            1
+            for phrase in SearchService.AUDIT_SAMPLING_TERMS
+            if phrase.lower() in haystack
+        )
+        negative_hits = sum(
+            1
+            for phrase in SearchService.NON_RISK_NEGATIVE_TERMS
+            if phrase.lower() in haystack
+        )
+        score = round(
+            keyphrase_hits * 1.0
+            + event_hits * 2.0
+            + sampling_hits * 1.5
+            - negative_hits * 1.0,
+            2,
+        )
+        if event_hits >= 2 or score >= TAX_FOCUS_HIGH_THRESHOLD:
+            label = "high"
+        elif score >= TAX_FOCUS_LOW_THRESHOLD or keyphrase_hits >= 3:
+            label = "medium"
+        else:
+            label = "low"
+        return score, label
 
     def _get_upload_dir(self) -> Path:
         if UPLOAD_DIR.exists() and UPLOAD_DIR.is_file():

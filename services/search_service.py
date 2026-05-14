@@ -684,6 +684,84 @@ class SearchService:
         ],
     }
 
+    NON_RISK_NEGATIVE_TERMS = [
+        "about us",
+        "about asus",
+        "company profile",
+        "company overview",
+        "corporate profile",
+        "corporate overview",
+        "company history",
+        "our history",
+        "milestones",
+        "our story",
+        "brand story",
+        "leadership team",
+        "management team",
+        "our culture",
+        "core values",
+        "mission and vision",
+        "vision and mission",
+        "our people",
+        "careers",
+        "career opportunities",
+        "join us",
+        "recruitment",
+        "internship",
+        "press kit",
+        "media kit",
+        "newsroom highlights",
+        "product launch",
+        "product specifications",
+        "product line",
+        "buy now",
+        "shop now",
+        "store locator",
+        "wikipedia",
+        "biography",
+        "founder profile",
+        "公司簡介",
+        "公司介紹",
+        "公司沿革",
+        "企業沿革",
+        "經營理念",
+        "經營團隊簡介",
+        "領導團隊",
+        "願景與使命",
+        "企業文化",
+        "企業社會責任 簡介",
+        "人才招募",
+        "招聘",
+        "徵才",
+        "校園徵才",
+        "實習計畫",
+        "產品介紹",
+        "產品規格",
+        "產品系列",
+        "購買通路",
+        "經銷據點",
+        "門市據點",
+        "形象廣告",
+        "品牌故事",
+        "創辦人",
+        "百科",
+        "维基百科",
+        "维基",
+    ]
+
+    RISK_THEME_KEYS = (
+        "audit",
+        "sampling",
+        "penalty",
+        "transfer_pricing",
+        "pillar_two",
+        "cfc",
+        "permanent_establishment",
+        "withholding_tax",
+        "tariff",
+        "vat_gst",
+    )
+
     JURISDICTION_PROFILE = {
         "tw": {
             "languages": ["zh-TW", "en"],
@@ -802,12 +880,14 @@ class SearchService:
         source_name: str = "google_news_rss",
         use_ai_query_expansion: bool = True,
         provider: str = "ollama",
-        model_name: str = "qwen3:8b"
+        model_name: str = "qwen3:8b",
+        risk_theme_labels: Optional[List[str]] = None
     ) -> List[Dict]:
         keywords = self._normalize_keywords(keywords)
         query = " ".join(keywords)
         candidate_urls = candidate_urls or []
         source_name = (source_name or "google_news_rss").strip().lower()
+        normalized_themes = self._normalize_risk_themes(risk_theme_labels)
 
         if mode == "manual" and candidate_urls:
             return [
@@ -828,7 +908,8 @@ class SearchService:
             user_prompt=user_prompt,
             provider=provider,
             model_name=model_name,
-            enabled=use_ai_query_expansion
+            enabled=use_ai_query_expansion,
+            risk_theme_labels=normalized_themes
         )
 
         intent: Dict = {}
@@ -876,9 +957,15 @@ class SearchService:
                 ai_variants=ai_variants,
                 source_name=source_name
         )
-        ranked = self._rank_results(results, keywords=keywords, user_prompt=user_prompt, intent=intent)
+        ranked = self._rank_results(
+            results,
+            keywords=keywords,
+            user_prompt=user_prompt,
+            intent=intent,
+            risk_theme_labels=normalized_themes,
+        )
         deduped = self._dedup_by_title_similarity(ranked)
-        filtered = [item for item in deduped if item.get("relevance_score", 0.0) >= 1.0]
+        filtered = [item for item in deduped if item.get("relevance_score", 0.0) >= 1.8]
         return filtered[:max_results]
 
     SOURCE_HEALTH_FAIL_THRESHOLD = 3
@@ -2419,15 +2506,26 @@ Rules:
         user_prompt: str = None,
         provider: str = "ollama",
         model_name: str = "qwen3:8b",
-        enabled: bool = True
+        enabled: bool = True,
+        risk_theme_labels: Optional[List[str]] = None
     ) -> List[str]:
         if not enabled:
             return []
 
+        normalized_themes = self._normalize_risk_themes(risk_theme_labels)
+        theme_hint_block = ""
+        if normalized_themes:
+            theme_hint_block = (
+                "\nLocked risk themes (every query MUST include at least one of these or a localized synonym):\n"
+                f"{', '.join(normalized_themes)}\n"
+            )
+
         prompt = f"""
-You are a search strategist for tax and regulatory monitoring.
-Given the user's keywords and intent, generate related search queries that may find relevant results
-even when the exact original wording is not used.
+You are a search strategist for cross-border TAX RISK monitoring.
+The user is researching tax exposure (audits, penalties, transfer pricing, withholding, Pillar Two, customs disputes,
+filing obligations, compliance, etc.) — NOT general company profiles, product launches, marketing or career pages.
+
+Given the user's keywords and intent, generate related search queries.
 
 Return JSON only:
 {{
@@ -2440,14 +2538,22 @@ Return JSON only:
 
 Original keywords: {keywords}
 User intent: {user_prompt or ""}
-
-Requirements:
-- include semantic alternatives
-- include regulatory / filing / compliance synonyms
-- if the keywords include a company, infer likely legal names, English names, stock names, abbreviations, group names, and subsidiary wording
-- include annual report, sustainability report, financial statement, tax governance, income tax, transfer pricing, related party transactions, subsidiaries, affiliates, group structure
-- keep each query concise
-- do not include explanations
+{theme_hint_block}
+Hard requirements:
+- EVERY query MUST combine the user's entity / keyword with at least one tax-risk topic
+  (examples: transfer pricing, withholding tax, Pillar Two, global minimum tax, tax audit,
+  tax penalty, back tax, customs dispute, permanent establishment, CFC, VAT/GST dispute,
+  filing obligation, 補稅, 稽查, 移轉訂價, 扣繳稅, 常設機構, 反傾銷, 海關稽查).
+- NEVER produce queries that look like company brochures
+  (do NOT produce things like "ASUS company profile", "ASUS about us", "ASUS careers",
+  "ASUS product launch", "華碩 公司簡介", "華碩 沿革", "華碩 形象廣告").
+- Include semantic alternatives, regulatory / filing / compliance synonyms.
+- If the keywords include a company, infer legal names, English names, stock tickers, group names,
+  and subsidiary wording — but always pair them with a tax-risk topic.
+- Include annual report / sustainability report / financial statement only when paired with a tax angle
+  (income tax, transfer pricing, related party transactions, tax governance, uncertain tax positions).
+- Keep each query concise.
+- Do not include explanations.
 """
         data = self.llm_service.generate_json(
             prompt=prompt,
@@ -3096,6 +3202,7 @@ Requirements:
         keywords: List[str],
         user_prompt: str = None,
         intent: Optional[Dict] = None,
+        risk_theme_labels: Optional[List[str]] = None,
     ) -> List[Dict]:
         prompt_terms = re.findall(r"[\u4e00-\u9fff]{2,}|[a-z0-9_-]{2,}", (user_prompt or "").lower())
         entity_aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
@@ -3103,6 +3210,9 @@ Requirements:
         intent = intent or {}
         exclude_terms = [term.lower() for term in (intent.get("exclude_terms") or []) if isinstance(term, str)]
         must_have_terms = [term.lower() for term in (intent.get("must_have_terms") or []) if isinstance(term, str)]
+        normalized_themes = self._normalize_risk_themes(risk_theme_labels)
+        theme_terms = self._expand_theme_terms(normalized_themes)
+        negative_terms = [term.lower() for term in self.NON_RISK_NEGATIVE_TERMS]
 
         for result in results:
             haystack = " ".join([
@@ -3175,6 +3285,15 @@ Requirements:
             )
             exclude_penalty = sum(2.5 for term in exclude_terms if term and term in haystack)
             must_have_bonus = sum(1.6 for term in must_have_terms if term and term in haystack)
+            matched_negative_terms = [term for term in negative_terms if term in haystack]
+            non_risk_penalty = sum(1.8 for _ in matched_negative_terms)
+            matched_theme_terms = [term for term in theme_terms if term in haystack]
+            theme_bonus = sum(1.4 for _ in matched_theme_terms)
+            theme_required_penalty = (
+                2.0
+                if theme_terms and not matched_theme_terms and not self._is_official_tax_domain(domain)
+                else 0.0
+            )
 
             result["domain"] = domain
             result["result_type"] = self._infer_result_type(result)
@@ -3187,6 +3306,8 @@ Requirements:
                 disclosure_bonus=disclosure_bonus,
                 pdf_bonus=pdf_bonus,
                 intent=intent,
+                negative_terms=matched_negative_terms,
+                theme_terms=matched_theme_terms,
             )
             result["relevance_score"] = round(
                 keyword_hits
@@ -3206,12 +3327,15 @@ Requirements:
                 + title_bonus
                 + source_bonus
                 + must_have_bonus
+                + theme_bonus
                 - weak_topic_penalty
                 - social_penalty
                 - generic_reference_penalty
                 - unrelated_company_penalty
                 - event_document_penalty
-                - exclude_penalty,
+                - exclude_penalty
+                - non_risk_penalty
+                - theme_required_penalty,
                 2
             )
             if result.get("source") == "reference_seed" and alias_hits == 0 and domain_alias_bonus == 0 and has_company_focus:
@@ -3241,6 +3365,35 @@ Requirements:
                 normalized.append(cleaned)
         return normalized
 
+    def _normalize_risk_themes(self, labels: Optional[List[str]]) -> List[str]:
+        if not labels:
+            return []
+        valid = set(self.RISK_THEME_KEYS)
+        normalized = []
+        seen = set()
+        for label in labels:
+            if not isinstance(label, str):
+                continue
+            key = label.strip().lower().replace("-", "_").replace(" ", "_")
+            if key in valid and key not in seen:
+                seen.add(key)
+                normalized.append(key)
+        return normalized
+
+    def _expand_theme_terms(self, theme_keys: List[str]) -> List[str]:
+        if not theme_keys:
+            return []
+        terms: List[str] = []
+        seen = set()
+        for key in theme_keys:
+            for term in self.TAX_AUDIT_THESAURUS.get(key, []):
+                lowered = term.lower()
+                if lowered in seen:
+                    continue
+                seen.add(lowered)
+                terms.append(lowered)
+        return terms
+
     def _build_match_reasons(
         self,
         result: Dict,
@@ -3251,6 +3404,8 @@ Requirements:
         disclosure_bonus: float,
         pdf_bonus: float,
         intent: Optional[Dict] = None,
+        negative_terms: Optional[List[str]] = None,
+        theme_terms: Optional[List[str]] = None,
     ) -> List[str]:
         haystack = " ".join([
             result.get("title", ""),
@@ -3332,10 +3487,16 @@ Requirements:
         if matched_exclude:
             reasons.append(f"命中意圖排除詞 (扣分)：{', '.join(matched_exclude)}")
 
+        if theme_terms:
+            reasons.append(f"命中指定稅務主題：{', '.join(theme_terms[:3])}")
+
+        if negative_terms:
+            reasons.append(f"命中公司簡介類負向詞 (扣分)：{', '.join(negative_terms[:3])}")
+
         if not reasons:
             reasons.append("語意相近且整體相關")
 
-        return reasons[:5]
+        return reasons[:6]
 
     def _extract_domain(self, url: str) -> str:
         try:

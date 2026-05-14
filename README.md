@@ -1,6 +1,6 @@
 # Tax Monitor 交付版快速指南
 
-最後整理日期：2026-05-08
+最後整理日期：2026-05-14
 
 Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完成：
 
@@ -12,6 +12,82 @@ Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完�
 6. 訓練關鍵字模型
 7. 產出 PPTX 稅務風險報告
 8. 匯出 n8n workflow 做排程自動化
+
+## 2026-05-14 更新：自動寄信通知（非程式背景員工也能用）
+
+n8n 分頁新增「自動寄信通知」區塊。員工只需要填三個欄位，按一鍵就會產出 n8n workflow JSON + 一份純文字「三步驟設定卡」，照著做就會自動收到稅務風險 PPTX 報告。
+
+要填的三個欄位：
+
+- **收件 Email**：要把 PPTX 寄到哪
+- **寄件 Gmail**：用哪一個 Gmail 帳號當寄件人（會用 Google App Password 授權）
+- **觸發頻率**：四選一
+  - 每月一次 (每月 1 號 09:00)
+  - 每週一次 (週一 09:00)
+  - 每天一次 (每天 09:00)
+  - 有新資訊時 (每 6 小時掃，只在 High Risk 才寄)
+
+按「一鍵匯出自動通知包 (JSON + 操作說明)」，會在你選的資料夾建一個 `tax_monitor_alert_yyyymmdd_HHMMSS/` 子目錄，裡面有：
+
+```
+tax_monitor_alert_20260514_xxxxxx/
+├─ tax_monitor_n8n_alert_workflow.json   # 拖進 n8n 用
+└─ 三步驟設定卡.txt                       # 員工照這份做就好
+```
+
+「三步驟設定卡」會告訴使用者：
+
+1. 在 Tax Monitor 桌面程式按下「Start API server」，讓 n8n 找得到 API
+2. 把 workflow JSON 匯入 n8n（如果還沒有 n8n，桌面程式有「Start n8n with npx」按鈕可以自動啟動）
+3. 第一次設定 Gmail 寄件（拿一組 16 碼 Google App Password，貼到 n8n SMTP credential），並把 workflow 切到 Active
+
+之後員工不用碰程式碼、不用看 cron expression，到時間就會自動收到信，PPTX 直接是附件。
+
+實作影響到的檔案：
+
+```
+desktop_app/n8n_panel.py     # 新增「自動寄信通知」LabelFrame、export_alert_bundle、
+                               # _build_alert_workflow、_build_setup_card
+README.md                    # 本段
+```
+
+設計重點：
+
+- Workflow 用單一 `/api/pipeline/run` 取代舊版「search → analyze → report」三段呼叫，節點從 ~10 個壓到 6 個
+- PPTX 用 `readBinaryFile` 讀進 binary property，直接走 `emailSend.attachments` 變成郵件附件
+- 「有新資訊時」這個頻率會自動把 `high_risk_only=True` 注入 payload，再在 `展開每份報告` 節點過濾 `documents.length === 0` 時直接結束，所以沒有偵測到 High Risk 就不會寄空信
+- SMTP credential 名稱統一叫 `Gmail SMTP (Tax Monitor)`，方便使用者在 n8n 裡認
+
+## 2026-05-14 更新：搜尋精準度強化
+
+針對「輸入公司名（例如華碩）時抓到公司基本介紹頁、稀釋掉真正的稅務風險文章」這個問題，做了四層強化：
+
+- **A. 負向詞扣分 + 提高過濾門檻**：在 `services/search_service.py` 加入 `NON_RISK_NEGATIVE_TERMS`（about us / company profile / careers / 公司簡介 / 公司沿革 / 經營理念 / 招募 / 產品介紹 / 维基百科…），命中扣 1.8 分；搜尋分數門檻從 `>= 1.0` 提升到 `>= 1.8`，讓純公司簡介頁更難擠進結果。
+- **B. 抓到內文後加「稅務焦點閘」**：`services/document_service.py` 在每次入庫後計算 `tax_focus_score` 與 `tax_focus_label`（`low` / `medium` / `high`），以 `TAX_KEYPHRASES` + `TAX_RISK_EVENT_TOPICS` + `AUDIT_SAMPLING_TERMS` 命中次數計分，並扣掉內文中的負向詞。Pipeline 會用 `min_tax_focus` 參數決定哪些低焦點文章「入庫但不分析、不生成 PPTX」。
+- **C. AI query expansion prompt 強制配主題**：`_build_ai_query_variants` 的 prompt 明確要求「每個生成的查詢都必須結合公司／關鍵字 + 至少一個稅務風險主題」、並禁止輸出 “ASUS company profile” / “華碩 沿革” 這類純公司簡介 query。
+- **D. UI 與 API 加入 `risk_theme_labels` 主題鎖定**：Tkinter 桌面端 Input Panel 多了 10 個主題勾選框（稅務稽查 / 選案抽樣 / 補稅裁罰 / 移轉訂價 / Pillar Two / CFC / 常設機構 / 扣繳稅 / 關稅 / VAT），勾選後會被注入到搜尋的詞庫加權與 AI query expansion；以及一個 `Min tax focus for PPTX` 下拉（low / medium / high）。FastAPI 的 `SearchRequest` / `PipelineRunRequest` / `SearchTrainRequest` 都新增了 `risk_theme_labels: List[str]` 與 `min_tax_focus: str` 欄位。
+
+使用建議：
+
+- 預設仍是 `min_tax_focus = low`，保留所有匯入結果——只有命中負向詞與低焦點的文章才會被擋。第一次想看篩選效果可以把它調到 `medium`。
+- 主題勾選會同時影響「搜尋打分」與「AI 變體 prompt」。如果只想做廣泛掃描可全部不勾，跟舊行為一致。
+- 手動模式（直接給 `candidate_urls`）不會被 `min_tax_focus` 過濾，仍會跑分析與 PPTX。Smoke test 就是這個路徑。
+
+實作影響到的檔案：
+
+```
+services/search_service.py     # NON_RISK_NEGATIVE_TERMS, RISK_THEME_KEYS,
+                                # _normalize_risk_themes, _expand_theme_terms,
+                                # _rank_results 加負向扣分+主題加權, 門檻 1.8,
+                                # _build_ai_query_variants 新 prompt
+services/document_service.py   # _compute_tax_focus, response 帶 tax_focus_*
+services/pipeline_service.py   # 兩個 inner pipeline 接 risk_theme_labels / min_tax_focus
+                                # 並用 _tax_focus_passes 決定是否跑分析+報告
+models/schemas.py              # 三個請求模型新增欄位 + RISK_THEME_OPTIONS
+routers/document.py            # /search 帶 risk_theme_labels
+routers/pipeline.py            # /run, /search-train 帶 risk_theme_labels, min_tax_focus
+desktop_app/input_panel.py     # 主題勾選 UI + Min tax focus 下拉 + payload 串接
+```
 
 ## 本輪檢查結果
 

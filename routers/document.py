@@ -217,7 +217,8 @@ async def search_documents(request: SearchRequest):
             source_name=request.source_name,
             use_ai_query_expansion=request.use_ai_query_expansion,
             provider=request.provider,
-            model_name=request.model_name
+            model_name=request.model_name,
+            risk_theme_labels=request.risk_theme_labels
         )
 
         normalized_results = []

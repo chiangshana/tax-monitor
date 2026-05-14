@@ -21,3 +21,4 @@ release/*.zip
 release/*.exe
 release/*.zip
 release/*.exe
+data/tax_monitor.db

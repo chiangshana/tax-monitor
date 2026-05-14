@@ -2,6 +2,8 @@ import os
 import tkinter as tk
 from tkinter import ttk
 
+from models.schemas import RISK_THEME_OPTIONS
+
 
 PROVIDER_MODEL_PRESETS = {
     "ollama": [
@@ -97,6 +99,7 @@ PROVIDER_DEFAULT_MODEL = {
 
 SOURCE_OPTIONS = ["deep_research", "duckduckgo", "bing_web", "all", "google_news_rss_global", "google_news_rss"]
 DATE_RANGE_OPTIONS = ["7d", "1m", "3m", "6m", "1y"]
+MIN_TAX_FOCUS_OPTIONS = ["low", "medium", "high"]
 
 
 class InputPanel(ttk.Frame):
@@ -190,8 +193,12 @@ class InputPanel(ttk.Frame):
             row=18, column=1, sticky="w", padx=(6, 0), pady=(4, 0)
         )
 
+        self._build_risk_theme_section(start_row=22)
+        self.min_tax_focus = tk.StringVar(value="low")
+        self._combo("Min tax focus for PPTX", self.min_tax_focus, MIN_TAX_FOCUS_OPTIONS, 26, 0)
+
         button_row = ttk.Frame(self)
-        button_row.grid(row=20, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        button_row.grid(row=28, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         button_row.columnconfigure(0, weight=3)
         button_row.columnconfigure(1, weight=1)
         self.run_button = ttk.Button(button_row, text="Run research", command=self.on_run)
@@ -201,7 +208,7 @@ class InputPanel(ttk.Frame):
 
         self.dark_mode = tk.BooleanVar(value=False)
         ttk.Checkbutton(self, text="Dark mode", variable=self.dark_mode, command=self._on_theme_toggle).grid(
-            row=21, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            row=29, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
 
         self._refresh_api_key_status()
@@ -240,6 +247,29 @@ class InputPanel(ttk.Frame):
             )
             self.api_key_label.configure(foreground="#a63a3a")
 
+    def _build_risk_theme_section(self, start_row: int):
+        ttk.Label(self, text="Risk themes (optional — lock search to these tax topics)").grid(
+            row=start_row, column=0, columnspan=2, sticky="w", pady=(8, 2)
+        )
+        self.risk_theme_vars = {}
+        theme_frame = ttk.Frame(self)
+        theme_frame.grid(row=start_row + 1, column=0, columnspan=2, sticky="ew")
+        theme_frame.columnconfigure(0, weight=1)
+        theme_frame.columnconfigure(1, weight=1)
+        for index, (key, label) in enumerate(RISK_THEME_OPTIONS):
+            var = tk.BooleanVar(value=False)
+            self.risk_theme_vars[key] = var
+            row = index // 2
+            column = index % 2
+            ttk.Checkbutton(theme_frame, text=label, variable=var).grid(
+                row=row, column=column, sticky="w", padx=(0, 8), pady=1
+            )
+
+    def _selected_risk_themes(self):
+        if not getattr(self, "risk_theme_vars", None):
+            return []
+        return [key for key, var in self.risk_theme_vars.items() if var.get()]
+
     def _combo(self, label, variable, values, row, column):
         ttk.Label(self, text=label).grid(row=row, column=column, sticky="w")
         box = ttk.Combobox(self, textvariable=variable, values=values, state="readonly")
@@ -277,6 +307,9 @@ class InputPanel(ttk.Frame):
         model_name = (self.model_name.get() or PROVIDER_DEFAULT_MODEL.get(provider, "qwen3:8b")).strip()
         self._apply_api_key_override(provider)
         self._refresh_api_key_status()
+        min_tax_focus = (self.min_tax_focus.get() or "low").strip().lower()
+        if min_tax_focus not in MIN_TAX_FOCUS_OPTIONS:
+            min_tax_focus = "low"
         return {
             "keywords": self._parse_keywords(self.keywords.get("1.0", "end")),
             "user_prompt": self.user_prompt.get("1.0", "end").strip() or None,
@@ -297,6 +330,8 @@ class InputPanel(ttk.Frame):
             "high_risk_only": bool(self.high_risk_only.get()),
             "use_rag_context": bool(self.use_rag_context.get()),
             "rag_top_k": int(self.rag_top_k.get()),
+            "risk_theme_labels": self._selected_risk_themes(),
+            "min_tax_focus": min_tax_focus,
         }
 
     def apply_suggestions(self, suggestion):

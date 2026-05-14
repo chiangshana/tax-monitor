@@ -1,6 +1,21 @@
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from pydantic import BaseModel, Field
+
+
+RISK_THEME_OPTIONS = [
+    ("audit", "稅務稽查 / 查核"),
+    ("sampling", "選案 / 抽樣"),
+    ("penalty", "補稅 / 裁罰"),
+    ("transfer_pricing", "移轉訂價"),
+    ("pillar_two", "Pillar Two / 全球最低稅負"),
+    ("cfc", "CFC / 受控外國公司"),
+    ("permanent_establishment", "常設機構"),
+    ("withholding_tax", "扣繳稅"),
+    ("tariff", "關稅 / 貿易救濟"),
+    ("vat_gst", "VAT / 加值稅"),
+]
+RISK_THEME_KEYS = [key for key, _ in RISK_THEME_OPTIONS]
 
 
 class DocumentSummary(BaseModel):
@@ -132,6 +147,7 @@ class SearchRequest(BaseModel):
     use_ai_query_expansion: bool = True
     provider: str = Field(default="ollama", pattern="^(ollama|openai|gemini|claude|qwen)$")
     model_name: str = "qwen3:8b"
+    risk_theme_labels: List[str] = Field(default_factory=list)
 
 
 class SearchResultItem(BaseModel):
@@ -239,6 +255,8 @@ class PipelineRunRequest(BaseModel):
     high_risk_only: bool = False
     use_rag_context: bool = True
     rag_top_k: int = Field(default=4, ge=0, le=10)
+    risk_theme_labels: List[str] = Field(default_factory=list)
+    min_tax_focus: str = Field(default="low", pattern="^(low|medium|high)$")
 
 
 class PipelineDocumentResult(BaseModel):
@@ -250,6 +268,8 @@ class PipelineDocumentResult(BaseModel):
     rag_source_count: int = 0
     report_format: str
     report_file_path: Optional[str] = None
+    tax_focus_label: Optional[str] = None
+    tax_focus_score: Optional[float] = None
 
 
 class PipelineRunResponse(BaseModel):
@@ -284,6 +304,8 @@ class SearchTrainRequest(BaseModel):
     high_risk_only: bool = False
     use_rag_context: bool = True
     rag_top_k: int = Field(default=4, ge=0, le=10)
+    risk_theme_labels: List[str] = Field(default_factory=list)
+    min_tax_focus: str = Field(default="low", pattern="^(low|medium|high)$")
 
 
 class SearchTrainDocumentResult(BaseModel):
@@ -296,6 +318,9 @@ class SearchTrainDocumentResult(BaseModel):
     risk_tags: List[str] = Field(default_factory=list)
     rag_source_count: int = 0
     pptx_file_path: Optional[str] = None
+    tax_focus_label: Optional[str] = None
+    tax_focus_score: Optional[float] = None
+    skipped_reason: Optional[str] = None
 
 
 class SearchTrainSearchResult(BaseModel):
@@ -360,7 +385,7 @@ class SearchTrainResponse(BaseModel):
     searched_result_count: int
     ingested_result_count: int
     generated_report_count: int
-    trained_keyword_model: Dict[str, str | int]
+    trained_keyword_model: Dict[str, Union[str, int]]
     search_results: List[SearchTrainSearchResult] = Field(default_factory=list)
     documents: List[SearchTrainDocumentResult] = Field(default_factory=list)
     run_id: Optional[str] = None

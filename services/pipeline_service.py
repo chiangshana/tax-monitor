@@ -16,6 +16,17 @@ from services.storage_service import StorageService
 PipelineProgressCallback = Callable[[Dict], None]
 
 
+TAX_FOCUS_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+def _tax_focus_passes(label: Optional[str], minimum: str) -> bool:
+    if not minimum or minimum == "low":
+        return True
+    current = TAX_FOCUS_RANK.get((label or "low").lower(), 0)
+    required = TAX_FOCUS_RANK.get(minimum.lower(), 0)
+    return current >= required
+
+
 class PipelineCancelled(Exception):
     pass
 
@@ -222,6 +233,8 @@ class PipelineService:
         high_risk_only: bool = False,
         use_rag_context: bool = True,
         rag_top_k: int = 4,
+        risk_theme_labels: Optional[List[str]] = None,
+        min_tax_focus: str = "low",
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -244,6 +257,8 @@ class PipelineService:
             "high_risk_only": high_risk_only,
             "use_rag_context": use_rag_context,
             "rag_top_k": rag_top_k,
+            "risk_theme_labels": risk_theme_labels or [],
+            "min_tax_focus": min_tax_focus,
         }
         self._reset_token_counters()
         run_id = self._start_run(run_payload)
@@ -271,6 +286,8 @@ class PipelineService:
                 high_risk_only=high_risk_only,
                 use_rag_context=use_rag_context,
                 rag_top_k=rag_top_k,
+                risk_theme_labels=risk_theme_labels,
+                min_tax_focus=min_tax_focus,
                 progress_callback=progress_callback,
                 cancel_event=cancel_event,
             )
@@ -326,6 +343,8 @@ class PipelineService:
         high_risk_only: bool = False,
         use_rag_context: bool = True,
         rag_top_k: int = 4,
+        risk_theme_labels: Optional[List[str]] = None,
+        min_tax_focus: str = "low",
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -343,7 +362,8 @@ class PipelineService:
             source_name=source_name,
             use_ai_query_expansion=use_ai_query_expansion,
             provider=provider,
-            model_name=model_name
+            model_name=model_name,
+            risk_theme_labels=risk_theme_labels
         )
         self._emit_progress(progress_callback, "search_completed", count=len(results))
         self._check_cancel(cancel_event)
@@ -371,6 +391,19 @@ class PipelineService:
             item = entry["item"]
             ingest_result = entry["ingest_result"]
             doc_id = ingest_result["document"]["doc_id"]
+            tax_focus_label = ingest_result.get("tax_focus_label")
+            tax_focus_score = ingest_result.get("tax_focus_score")
+            if mode != "manual" and not _tax_focus_passes(tax_focus_label, min_tax_focus):
+                self._emit_progress(
+                    progress_callback,
+                    "analysis_skipped",
+                    index=index,
+                    doc_id=doc_id,
+                    reason="tax_focus_below_threshold",
+                    tax_focus_label=tax_focus_label,
+                    tax_focus_score=tax_focus_score,
+                )
+                continue
             self._emit_progress(
                 progress_callback,
                 "analysis_started",
@@ -445,7 +478,9 @@ class PipelineService:
                 "risk_tags": analysis.get("risk_tags", []),
                 "rag_source_count": len(analysis.get("rag_context", {}).get("chunks") or []),
                 "report_format": report_format,
-                "report_file_path": report.get("file_path")
+                "report_file_path": report.get("file_path"),
+                "tax_focus_label": tax_focus_label,
+                "tax_focus_score": tax_focus_score
             })
 
         if ingested_count:
@@ -501,6 +536,8 @@ class PipelineService:
         high_risk_only: bool = False,
         use_rag_context: bool = True,
         rag_top_k: int = 4,
+        risk_theme_labels: Optional[List[str]] = None,
+        min_tax_focus: str = "low",
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -519,6 +556,8 @@ class PipelineService:
             "high_risk_only": high_risk_only,
             "use_rag_context": use_rag_context,
             "rag_top_k": rag_top_k,
+            "risk_theme_labels": risk_theme_labels or [],
+            "min_tax_focus": min_tax_focus,
         }
         self._reset_token_counters()
         run_id = self._start_run(run_payload)
@@ -546,6 +585,8 @@ class PipelineService:
                 high_risk_only=high_risk_only,
                 use_rag_context=use_rag_context,
                 rag_top_k=rag_top_k,
+                risk_theme_labels=risk_theme_labels,
+                min_tax_focus=min_tax_focus,
                 progress_callback=progress_callback,
                 cancel_event=cancel_event,
             )
@@ -602,6 +643,8 @@ class PipelineService:
         high_risk_only: bool = False,
         use_rag_context: bool = True,
         rag_top_k: int = 4,
+        risk_theme_labels: Optional[List[str]] = None,
+        min_tax_focus: str = "low",
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None
     ) -> Dict:
@@ -620,7 +663,8 @@ class PipelineService:
             source_name=source_name,
             use_ai_query_expansion=use_ai_query_expansion,
             provider=provider,
-            model_name=model_name
+            model_name=model_name,
+            risk_theme_labels=risk_theme_labels
         )
         self._emit_progress(progress_callback, "search_completed", count=len(results))
 
@@ -648,6 +692,8 @@ class PipelineService:
             item = entry["item"]
             ingest_result = entry["ingest_result"]
             doc_summary = ingest_result["document"]
+            tax_focus_label = ingest_result.get("tax_focus_label")
+            tax_focus_score = ingest_result.get("tax_focus_score")
             document_result = {
                 "doc_id": doc_summary["doc_id"],
                 "title": doc_summary["title"],
@@ -656,10 +702,25 @@ class PipelineService:
                 "extracted_keywords": ingest_result.get("extracted_keywords", []),
                 "risk_level": None,
                 "risk_tags": [],
-                "pptx_file_path": None
+                "pptx_file_path": None,
+                "tax_focus_label": tax_focus_label,
+                "tax_focus_score": tax_focus_score,
+                "skipped_reason": None
             }
 
-            if generate_pptx and generated_report_count < max_documents_to_process:
+            allow_analysis = mode == "manual" or _tax_focus_passes(tax_focus_label, min_tax_focus)
+            if not allow_analysis:
+                document_result["skipped_reason"] = "tax_focus_below_threshold"
+                self._emit_progress(
+                    progress_callback,
+                    "analysis_skipped",
+                    doc_id=doc_summary["doc_id"],
+                    reason="tax_focus_below_threshold",
+                    tax_focus_label=tax_focus_label,
+                    tax_focus_score=tax_focus_score,
+                )
+
+            if allow_analysis and generate_pptx and generated_report_count < max_documents_to_process:
                 progress_index = len(ingested_documents) + 1
                 self._emit_progress(
                     progress_callback,

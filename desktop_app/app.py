@@ -4,8 +4,6 @@ from tkinter import messagebox, ttk
 from desktop_app.input_panel import InputPanel
 from desktop_app.results_panel import ResultsPanel
 from desktop_app.worker import PipelineWorker
-from services.runtime_paths import output_dir
-from services.storage_service import StorageService
 
 
 class TaxMonitorDesktopApp(tk.Tk):
@@ -16,7 +14,6 @@ class TaxMonitorDesktopApp(tk.Tk):
         self.minsize(980, 620)
         self._configure_style()
         self._build()
-        self._mark_previous_interrupted_runs()
 
     LIGHT_THEME = {
         "bg": "#f5f7fb",
@@ -95,14 +92,6 @@ class TaxMonitorDesktopApp(tk.Tk):
         )
         self.input_panel.bind_stop_handler(self._cancel)
 
-    def _mark_previous_interrupted_runs(self):
-        try:
-            updated = StorageService().mark_stale_running_runs()
-        except Exception:
-            updated = 0
-        if updated:
-            self.results_panel.set_status(f"Recovered {updated} interrupted run(s) from the previous session.")
-
     def _run(self):
         if hasattr(self, "worker") and self.worker.is_running():
             messagebox.showinfo("Already running", "A research run is already in progress.")
@@ -111,64 +100,9 @@ class TaxMonitorDesktopApp(tk.Tk):
         if not payload["keywords"]:
             messagebox.showwarning("Missing keywords", "Please enter at least one search keyword.")
             return
-        cleanup = payload.pop("cleanup", {})
-        if not self._maybe_cleanup_before_run(cleanup):
-            return
         self.input_panel.set_running(True)
         self.results_panel.set_status("Running research pipeline...")
         self.worker.run(payload)
-
-    def _maybe_cleanup_before_run(self, cleanup):
-        if not cleanup or not cleanup.get("clear_before_run"):
-            return True
-
-        selected = []
-        if cleanup.get("documents"):
-            selected.append("documents and keyword model")
-        if cleanup.get("pipeline_runs"):
-            selected.append("run history")
-        if cleanup.get("reports"):
-            selected.append("generated PPTX/reports")
-        if not selected:
-            messagebox.showwarning("No cleanup target", "Please select at least one data type to clear, or turn off cleanup.")
-            return False
-
-        confirmed = messagebox.askyesno(
-            "Confirm cleanup",
-            "Before this run, Tax Monitor will clear:\n\n"
-            + "\n".join(f"- {item}" for item in selected)
-            + "\n\nThis cannot be undone. Continue?",
-        )
-        if not confirmed:
-            return False
-
-        deleted = StorageService().clear_runtime_data(
-            documents=bool(cleanup.get("documents")),
-            keyword_profiles=bool(cleanup.get("keyword_profiles")),
-            pipeline_runs=bool(cleanup.get("pipeline_runs")),
-        )
-        report_count = self._clear_report_files() if cleanup.get("reports") else 0
-        self.results_panel.set_status(
-            "Cleaned before run: "
-            f"documents={deleted.get('documents', 0)}, "
-            f"keyword_profiles={deleted.get('keyword_profiles', 0)}, "
-            f"history={deleted.get('pipeline_runs', 0)}, "
-            f"reports={report_count}"
-        )
-        return True
-
-    def _clear_report_files(self):
-        reports_dir = output_dir("reports").resolve()
-        reports_dir.mkdir(parents=True, exist_ok=True)
-        deleted = 0
-        for path in reports_dir.iterdir():
-            try:
-                if path.is_file() and path.resolve().parent == reports_dir:
-                    path.unlink()
-                    deleted += 1
-            except OSError:
-                continue
-        return deleted
 
     def _cancel(self):
         if self.worker.is_running():

@@ -1,6 +1,6 @@
 # Tax Monitor 交付版快速指南
 
-最後整理日期：2026-05-09
+最後整理日期：2026-05-08
 
 Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完成：
 
@@ -23,9 +23,6 @@ Tax Monitor 是一套稅務風險自動研究工具，主流程可以一次完�
 - 分析與 PPTX 輸出可用 Ollama 或 OpenAI / Gemini / Claude / Qwen Cloud API
 - n8n 分頁可依目前設定匯出自動化 workflow
 - 新增 RAG：分析每篇文件時會從本機已匯入資料庫抓相關片段，作為 LLM 交叉比對背景
-- `deep_research` 已調整為 demo 友善模式：先回傳官方年報、財報、關係人交易與公司治理等高品質種子來源，避免在 sitemap / 多搜尋來源階段長時間看似卡住。
-- 桌面版啟動時會把前一次非正常關閉留下的 `running` 歷史紀錄標記為 `interrupted`。
-- `requirements.txt` 已補上 `cryptography`，可解析更多使用 AES 加密格式的 PDF。
 
 仍需注意：
 
@@ -116,9 +113,9 @@ release/TaxMonitor-Setup.exe
 3. 建議設定：
 
 ```text
-Source: deep_research（預設）或 all
+Source: all 或 deep_research
 Period: 3m
-Max results: 30-200
+Max results: 30-100
 PPTX limit: 3-10
 LLM provider: ollama
 LLM model: qwen3:8b
@@ -128,14 +125,8 @@ RAG chunks: 4
 Generate PPTX: checked
 ```
 
-4. 若想重跑乾淨資料，可勾選 `Clear selected data before this run`，再選擇清除：
-   - `Documents + keyword model`
-   - `Run history`
-   - `Generated PPTX/reports`
-5. 按 `Run research`
-6. 右側分頁查看 `Summary`、`Search results`、`Documents`、`PPTX`、`Assistant`、`LLM Setup`、`n8n Automation`、`History`
-
-桌面版現在會在匯入第一輪網頁後，自動追蹤頁面中的年報、財報、PDF、投資人關係與治理文件連結，並做第二輪匯入；Summary 會顯示 `Embedded links followed`。
+4. 按 `Run research`
+5. 右側分頁查看 `Summary`、`Search results`、`Documents`、`PPTX`、`Assistant`、`LLM Setup`、`n8n Automation`、`History`
 
 ## LLM Setup 分頁
 
@@ -143,9 +134,7 @@ Generate PPTX: checked
 
 - 檢查是否已安裝 Ollama
 - 用 `winget` 嘗試安裝 Ollama
-- 從清單選模型，按 `One-click setup selected model`
-- 一鍵流程會嘗試：尋找或安裝 Ollama → 啟動本地服務 → 執行 `ollama pull`
-- 也可直接按 `Qwen 3 8B`、`Qwen 3.5 9B`、`Qwen 3.5 27B` 快速安裝按鈕
+- 從清單選模型並執行 `ollama pull`
 - 查看已安裝模型
 
 建議模型：
@@ -327,31 +316,7 @@ data/reports/
 
 執行過程若看到 `Ingest phase done: N documents`，代表搜尋與匯入已完成，接下來會進入 LLM 分析與 PPTX 產生。新版桌面版會繼續顯示 `Analyzing...`、`Generating pptx report...`、`Report ready...` 等狀態；若舊版畫面停在 ingest 階段但資料夾已有新 `.pptx`，通常是 UI 進度未更新，請換用新版安裝包。
 
-若 `Search results` 有數字但 `Ingested` 是 0，通常代表網址找得到、但文件下載被擋住。常見原因是 Windows 環境變數裡有壞掉的 proxy，例如：
-
-```powershell
-HTTP_PROXY=http://127.0.0.1:9
-HTTPS_PROXY=http://127.0.0.1:9
-ALL_PROXY=http://127.0.0.1:9
-```
-
-新版 Tax Monitor 預設會忽略這類環境 proxy，讓公開網站可直接下載。若公司內網真的必須走 proxy，再手動設定：
-
-```powershell
-$env:TAX_MONITOR_TRUST_PROXY = "1"
-```
-
-桌面版 Summary 也會顯示前幾筆匯入錯誤，方便判斷是網站封鎖、PDF 下載失敗、網路逾時，還是 proxy 問題。
-
 ## 重新打包 Windows 安裝包
-
-若安裝版出現 `Could not find a suitable TLS CA certificate bundle`，代表安裝包內缺少 `certifi/cacert.pem`。新版打包腳本會把憑證檔放進：
-
-```text
-%LOCALAPPDATA%\Programs\TaxMonitor\_internal\certifi\cacert.pem
-```
-
-重新打包並重新安裝後，可修正 HTTPS 網站與 PDF 下載失敗的問題。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\build_windows_installer.ps1
@@ -656,7 +621,6 @@ python -m pip install -r requirements.txt
 - `requests`
 - `beautifulsoup4`
 - `pypdf`
-- `cryptography`
 - `scikit-learn`
 - `pandas`
 - `python-pptx`
@@ -2356,8 +2320,6 @@ release\TaxMonitor-Windows-Installer.zip
 - 檢查本機是否已安裝 Ollama
 - 用 `winget` 嘗試安裝 Ollama
 - 從清單選擇並下載 Ollama 模型，例如 `qwen3:8b`
-- 按 `One-click setup selected model`，讓使用者不用輸入指令就能安裝所選模型
-- 使用快速按鈕一鍵安裝 `qwen3:8b`、`qwen3.5:9b` 或 `qwen3.5:27b`
 - 查看本機已安裝模型
 
 手動安裝模型也可以使用：

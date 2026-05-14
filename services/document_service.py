@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import os
 import re
 import uuid
 from datetime import datetime
@@ -264,8 +263,7 @@ class DocumentService:
 
     def _fetch_url_content(self, url: str):
         headers = {"User-Agent": "Mozilla/5.0"}
-        session = self._build_http_session()
-        response = session.get(url, timeout=20, headers=headers, stream=True)
+        response = requests.get(url, timeout=20, headers=headers, stream=True)
         response.raise_for_status()
 
         content_length = response.headers.get("Content-Length")
@@ -305,13 +303,6 @@ class DocumentService:
 
         text = soup.get_text(separator="\n")
         return title, self._cap_text(text), "web", embedded_links
-
-    def _build_http_session(self) -> requests.Session:
-        session = requests.Session()
-        # Windows demo machines sometimes inherit a dead proxy such as 127.0.0.1:9.
-        # Ignore environment proxy settings by default so ingestion can fetch public sources.
-        session.trust_env = os.getenv("TAX_MONITOR_TRUST_PROXY", "").lower() in ("1", "true", "yes")
-        return session
 
     def _cap_text(self, text: str) -> str:
         if not text:

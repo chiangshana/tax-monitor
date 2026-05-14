@@ -17,3 +17,7 @@ upload_files/*
 !data/reports/.gitkeep
 !data/uploads/.gitkeep
 !data/upload_files/.gitkeep
+release/*.zip
+release/*.exe
+release/*.zip
+release/*.exe

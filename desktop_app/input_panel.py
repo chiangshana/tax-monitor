@@ -119,7 +119,7 @@ class InputPanel(ttk.Frame):
         self.user_prompt.insert("1.0", "focus on high-risk tax updates for management review")
         self.user_prompt.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(4, 10))
 
-        self.source_name = tk.StringVar(value="deep_research")
+        self.source_name = tk.StringVar(value="all")
         self.date_range = tk.StringVar(value="3m")
         self.max_results = tk.IntVar(value=30)
         self.country = tk.StringVar(value="")
@@ -134,10 +134,6 @@ class InputPanel(ttk.Frame):
         self.model_name = tk.StringVar(value=PROVIDER_DEFAULT_MODEL["ollama"])
         self.api_key_status = tk.StringVar(value="")
         self.api_key_value = tk.StringVar(value="")
-        self.clear_before_run = tk.BooleanVar(value=False)
-        self.clear_documents = tk.BooleanVar(value=True)
-        self.clear_history = tk.BooleanVar(value=False)
-        self.clear_reports = tk.BooleanVar(value=False)
 
         self._combo(
             "Source",
@@ -147,7 +143,7 @@ class InputPanel(ttk.Frame):
             0,
         )
         self._combo("Period", self.date_range, DATE_RANGE_OPTIONS, 4, 1)
-        self._spinbox("Max results", self.max_results, 1, 200, 6, 0)
+        self._spinbox("Max results", self.max_results, 1, 100, 6, 0)
         self._spinbox("PPTX limit", self.max_documents_to_process, 1, 10, 6, 1)
         self._entry("Country", self.country, 8, 0)
         self._entry("Industry", self.industry, 8, 1)
@@ -194,22 +190,8 @@ class InputPanel(ttk.Frame):
             row=18, column=1, sticky="w", padx=(6, 0), pady=(4, 0)
         )
 
-        ttk.Label(self, text="Data cleanup").grid(row=20, column=0, columnspan=2, sticky="w", pady=(10, 0))
-        ttk.Checkbutton(self, text="Clear selected data before this run", variable=self.clear_before_run).grid(
-            row=21, column=0, columnspan=2, sticky="w"
-        )
-        ttk.Checkbutton(self, text="Documents + keyword model", variable=self.clear_documents).grid(
-            row=22, column=0, sticky="w"
-        )
-        ttk.Checkbutton(self, text="Run history", variable=self.clear_history).grid(
-            row=22, column=1, sticky="w", padx=(6, 0)
-        )
-        ttk.Checkbutton(self, text="Generated PPTX/reports", variable=self.clear_reports).grid(
-            row=23, column=0, columnspan=2, sticky="w"
-        )
-
         button_row = ttk.Frame(self)
-        button_row.grid(row=24, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        button_row.grid(row=20, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         button_row.columnconfigure(0, weight=3)
         button_row.columnconfigure(1, weight=1)
         self.run_button = ttk.Button(button_row, text="Run research", command=self.on_run)
@@ -219,7 +201,7 @@ class InputPanel(ttk.Frame):
 
         self.dark_mode = tk.BooleanVar(value=False)
         ttk.Checkbutton(self, text="Dark mode", variable=self.dark_mode, command=self._on_theme_toggle).grid(
-            row=25, column=0, columnspan=2, sticky="w", pady=(8, 0)
+            row=21, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
 
         self._refresh_api_key_status()
@@ -315,13 +297,6 @@ class InputPanel(ttk.Frame):
             "high_risk_only": bool(self.high_risk_only.get()),
             "use_rag_context": bool(self.use_rag_context.get()),
             "rag_top_k": int(self.rag_top_k.get()),
-            "cleanup": {
-                "clear_before_run": bool(self.clear_before_run.get()),
-                "documents": bool(self.clear_documents.get()),
-                "keyword_profiles": bool(self.clear_documents.get()),
-                "pipeline_runs": bool(self.clear_history.get()),
-                "reports": bool(self.clear_reports.get()),
-            },
         }
 
     def apply_suggestions(self, suggestion):
@@ -348,7 +323,7 @@ class InputPanel(ttk.Frame):
             self.date_range.set(date_range)
 
         if "max_results" in suggestion:
-            self.max_results.set(self._clamp_int(suggestion.get("max_results"), 1, 200, self.max_results.get()))
+            self.max_results.set(self._clamp_int(suggestion.get("max_results"), 1, 100, self.max_results.get()))
         if "max_documents_to_process" in suggestion:
             self.max_documents_to_process.set(
                 self._clamp_int(suggestion.get("max_documents_to_process"), 1, 10, self.max_documents_to_process.get())

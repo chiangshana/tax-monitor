@@ -5,18 +5,12 @@
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
-$env:PYTHONIOENCODING = "utf-8"
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $ProjectRoot
 
 if (-not (Test-Path -LiteralPath $Python)) {
     throw "Python executable not found: $Python"
-}
-
-$CertifiBundle = (& $Python -c "import certifi; print(certifi.where())").Trim()
-if (-not (Test-Path -LiteralPath $CertifiBundle)) {
-    throw "certifi CA bundle not found: $CertifiBundle"
 }
 
 $ReleaseRoot = Join-Path $ProjectRoot "release"
@@ -44,11 +38,9 @@ Write-Host "==> Building Tkinter desktop app with PyInstaller..."
     --collect-submodules pandas `
     --collect-submodules pptx `
     --collect-submodules routers `
-    --collect-data certifi `
     --hidden-import pypdf `
     --hidden-import main `
     --hidden-import uvicorn `
-    --add-data "$CertifiBundle;certifi" `
     --add-data "$ProjectRoot\ui;ui" `
     --add-data "$ProjectRoot\examples;examples" `
     --add-data "$ProjectRoot\n8n_tax_monitor_workflow.json;." `
@@ -115,8 +107,7 @@ $installPs1 = @(
     "Write-Host ''",
     "Write-Host 'Tax Monitor installed successfully.' -ForegroundColor Green",
     "Write-Host `"Installed to: `$target`"",
-    "Write-Host 'Open Tax Monitor from the desktop shortcut, then use LLM Setup > One-click setup selected model.'",
-    "Write-Host 'The app can find/install Ollama, start the local service, and pull the selected model.'"
+    "Write-Host 'For local LLM analysis, install Ollama and run: ollama pull qwen3:8b'"
 )
 Set-Content -LiteralPath (Join-Path $InstallerDir "install.ps1") -Encoding UTF8 -Value $installPs1
 
@@ -162,13 +153,10 @@ $installReadme = @(
     "1. Extract TaxMonitor-Windows-Installer.zip.",
     "2. Run install.bat.",
     "",
-    "Local LLM setup:",
-    "Open Tax Monitor from the desktop shortcut.",
-    "Go to LLM Setup.",
-    "Choose a model.",
-    "Click One-click setup selected model.",
+    "Local LLM requirement:",
+    "Install Ollama separately and run:",
     "",
-    "The app can find/install Ollama, start the local service, and pull the selected model.",
+    "ollama pull qwen3:8b",
     "",
     "This package is unsigned. Windows SmartScreen may show an unknown publisher warning."
 )

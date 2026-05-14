@@ -114,7 +114,6 @@ class PipelineService:
         source_name: str,
         progress_callback: Optional[PipelineProgressCallback] = None,
         cancel_event: Optional[threading.Event] = None,
-        ingest_errors: Optional[List[Dict]] = None,
     ) -> List[Dict]:
         semaphore = asyncio.Semaphore(self.INGEST_CONCURRENCY)
         completed_count = {"value": 0}
@@ -128,12 +127,6 @@ class PipelineService:
                 return None
             try:
                 if not self.search_service._head_precheck(url):
-                    if ingest_errors is not None:
-                        ingest_errors.append({
-                            "title": item.get("title", ""),
-                            "url": url,
-                            "error": "HEAD precheck rejected the URL before download.",
-                        })
                     self._emit_progress(
                         progress_callback,
                         "ingest_skipped",
@@ -162,12 +155,6 @@ class PipelineService:
                         defer_keyword_training=True,
                     )
                 except Exception as exc:
-                    if ingest_errors is not None:
-                        ingest_errors.append({
-                            "title": item.get("title", ""),
-                            "url": url,
-                            "error": str(exc),
-                        })
                     self._emit_progress(
                         progress_callback,
                         "ingest_failed",
@@ -190,43 +177,6 @@ class PipelineService:
 
         gathered = await asyncio.gather(*[_ingest_one(i, it) for i, it in enumerate(items)])
         return [entry for entry in gathered if entry is not None]
-
-    def _collect_embedded_ingest_items(
-        self,
-        ingested_entries: List[Dict],
-        existing_items: List[Dict],
-        limit: int,
-    ) -> List[Dict]:
-        seen_urls = {
-            (item.get("url") or "").strip().lower()
-            for item in existing_items
-            if item.get("url")
-        }
-        embedded_items: List[Dict] = []
-        for entry in ingested_entries:
-            parent_item = entry.get("item") or {}
-            ingest_result = entry.get("ingest_result") or {}
-            parent_title = parent_item.get("title") or parent_item.get("url") or "parent page"
-            for link in ingest_result.get("embedded_document_links") or []:
-                url = (link.get("url") or "").strip()
-                normalized_url = url.lower()
-                if not url or normalized_url in seen_urls:
-                    continue
-                seen_urls.add(normalized_url)
-                embedded_items.append({
-                    "title": link.get("text") or url,
-                    "url": url,
-                    "snippet": f"Embedded document discovered from {parent_title}",
-                    "source": "embedded_document",
-                    "published_at": parent_item.get("published_at"),
-                    "relevance_score": max(float(parent_item.get("relevance_score") or 0.0), 1.0) + 0.5,
-                    "domain": parent_item.get("domain"),
-                    "result_type": "pdf" if url.lower().endswith(".pdf") else "web",
-                    "match_reasons": ["頁面內延伸文件", "年報 / 財報 / PDF / 投資人資訊連結"],
-                })
-                if len(embedded_items) >= limit:
-                    return embedded_items
-        return embedded_items
 
     def _summarize_pipeline_result(self, payload: Dict, result: Dict) -> Dict:
         return {
@@ -400,7 +350,6 @@ class PipelineService:
 
         ingest_targets = results[:max(max_documents_to_process * 2, max_documents_to_process + 4)]
         self._emit_progress(progress_callback, "ingest_phase_started", total=len(ingest_targets))
-        ingest_errors: List[Dict] = []
         ingested = await self._ingest_items_concurrently(
             items=ingest_targets,
             country=country,
@@ -408,32 +357,10 @@ class PipelineService:
             source_name=source_name,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
-            ingest_errors=ingest_errors,
         )
         ingested_count = len(ingested)
         self._emit_progress(progress_callback, "ingest_phase_completed", ingested=ingested_count)
         self._check_cancel(cancel_event)
-
-        embedded_items = self._collect_embedded_ingest_items(
-            ingested_entries=ingested,
-            existing_items=results,
-            limit=max(max_documents_to_process * 4, 8),
-        )
-        if embedded_items:
-            self._emit_progress(progress_callback, "embedded_ingest_phase_started", total=len(embedded_items))
-            embedded_ingested = await self._ingest_items_concurrently(
-                items=embedded_items,
-                country=country,
-                industry=industry,
-                source_name=source_name,
-                progress_callback=progress_callback,
-                cancel_event=cancel_event,
-                ingest_errors=ingest_errors,
-            )
-            ingested.extend(embedded_ingested)
-            ingested_count = len(ingested)
-            self._emit_progress(progress_callback, "embedded_ingest_phase_completed", ingested=len(embedded_ingested))
-            self._check_cancel(cancel_event)
 
         processed_documents = []
 
@@ -533,9 +460,7 @@ class PipelineService:
             "ingested_result_count": ingested_count,
             "processed_count": len(processed_documents),
             "report_format": report_format,
-            "documents": processed_documents,
-            "embedded_result_count": len(embedded_items),
-            "ingest_errors": ingest_errors[:10]
+            "documents": processed_documents
         }
 
     def _normalize_search_results(self, results: List[Dict]) -> List[Dict]:
@@ -701,15 +626,12 @@ class PipelineService:
 
         ingested_documents: List[Dict] = []
         generated_report_count = 0
-        embedded_items: List[Dict] = []
 
         if not auto_ingest:
             ingested_count = 0
             ingested_pairs: List[Dict] = []
-            ingest_errors: List[Dict] = []
         else:
             self._emit_progress(progress_callback, "ingest_phase_started", total=len(results))
-            ingest_errors = []
             ingested_pairs = await self._ingest_items_concurrently(
                 items=results,
                 country=country,
@@ -717,30 +639,9 @@ class PipelineService:
                 source_name=source_name,
                 progress_callback=progress_callback,
                 cancel_event=cancel_event,
-                ingest_errors=ingest_errors,
             )
             ingested_count = len(ingested_pairs)
             self._emit_progress(progress_callback, "ingest_phase_completed", ingested=ingested_count)
-
-            embedded_items = self._collect_embedded_ingest_items(
-                ingested_entries=ingested_pairs,
-                existing_items=results,
-                limit=max(max_documents_to_process * 4, min(max_results, 12)),
-            )
-            if embedded_items:
-                self._emit_progress(progress_callback, "embedded_ingest_phase_started", total=len(embedded_items))
-                embedded_pairs = await self._ingest_items_concurrently(
-                    items=embedded_items,
-                    country=country,
-                    industry=industry,
-                    source_name=source_name,
-                    progress_callback=progress_callback,
-                    cancel_event=cancel_event,
-                    ingest_errors=ingest_errors,
-                )
-                ingested_pairs.extend(embedded_pairs)
-                ingested_count = len(ingested_pairs)
-                self._emit_progress(progress_callback, "embedded_ingest_phase_completed", ingested=len(embedded_pairs))
 
         for entry in ingested_pairs:
             self._check_cancel(cancel_event)
@@ -858,7 +759,5 @@ class PipelineService:
                 "vocabulary_size": train_result["vocabulary_size"]
             },
             "search_results": self._normalize_search_results(results),
-            "documents": ingested_documents,
-            "embedded_result_count": len(embedded_items),
-            "ingest_errors": ingest_errors[:10]
+            "documents": ingested_documents
         }

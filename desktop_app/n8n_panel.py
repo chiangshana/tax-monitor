@@ -287,7 +287,7 @@ class N8nAutomationPanel(ttk.Frame):
             "max_results": int(raw.get("max_results") or 30),
             "country": raw.get("country"),
             "industry": raw.get("industry"),
-            "source_name": raw.get("source_name") or "deep_research",
+            "source_name": raw.get("source_name") or "all",
             "candidate_urls": raw.get("candidate_urls") or [],
             "use_ai_query_expansion": bool(raw.get("use_ai_query_expansion", True)),
             "target_language": raw.get("target_language") or "zh",

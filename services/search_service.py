@@ -3,7 +3,6 @@ from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 import base64
 import itertools
-import os
 import re
 import threading
 import time
@@ -26,7 +25,6 @@ from services.llm_service import LLMService
 class SearchService:
     SEARCH_TIMEOUT_SECONDS = 8
     DEEP_FETCH_TIMEOUT_SECONDS = 12
-    PARALLEL_SEARCH_BATCH_TIMEOUT_SECONDS = 35
     CACHE_TTL_SECONDS = 600
     CACHE_MAX_ENTRIES = 256
     POLITE_UA_POOL = (
@@ -910,7 +908,6 @@ class SearchService:
 
     def _build_http_session(self) -> requests.Session:
         session = requests.Session()
-        session.trust_env = os.getenv("TAX_MONITOR_TRUST_PROXY", "").lower() in ("1", "true", "yes")
         if Retry is not None:
             retry = Retry(
                 total=2,
@@ -1060,7 +1057,7 @@ class SearchService:
         return True
 
     def _candidate_limit(self, max_results: int) -> int:
-        return min(250, max(40, max_results * 4))
+        return min(120, max(25, max_results * 3))
 
     def _search_google_news_rss(self, query: str, window: Dict[str, datetime], max_results: int) -> List[Dict]:
         when_clause = self._build_google_news_when(window)
@@ -1173,7 +1170,7 @@ class SearchService:
     ) -> List[Dict]:
         merged: List[Dict] = []
         seen_urls: set = set()
-        candidate_limit = max(1, max_results)
+        candidate_limit = self._candidate_limit(max_results)
         aliases = self._extract_entity_aliases(keywords=keywords, user_prompt=user_prompt)
         query_variants = self._merge_query_variants(
             keywords=keywords,
@@ -1196,8 +1193,6 @@ class SearchService:
 
         for item in self._build_seed_results(keywords=keywords, user_prompt=user_prompt):
             self._append_unique_result(merged, seen_urls, item)
-        if len(merged) >= candidate_limit:
-            return merged
 
         jurisdictions = self._detect_jurisdictions(keywords=keywords, user_prompt=user_prompt)
 
@@ -1391,19 +1386,6 @@ class SearchService:
                     break
             if len(merged_items) >= candidate_limit:
                 break
-
-        if source_name == "all" and len(merged_items) < candidate_limit:
-            prf_queries = self._pseudo_relevance_feedback(
-                seed_results=merged_items,
-                keywords=keywords,
-                user_prompt=user_prompt,
-            )
-            follow_up_tasks: List[Tuple[Callable, Tuple[Any, ...]]] = []
-            for prf_query in prf_queries[:10]:
-                follow_up_tasks.append((self._search_duckduckgo_html, (prf_query, max_results)))
-                follow_up_tasks.append((self._search_bing_web, (prf_query, max_results)))
-                follow_up_tasks.append((self._search_google_news_rss, (prf_query, window, max_results)))
-            self._run_parallel_searches(follow_up_tasks, candidate_limit, merged_items, seen_urls)
 
         return merged_items
 
@@ -2845,26 +2827,18 @@ Requirements:
             return []
         results = []
         seen_urls = set()
-        scan_limit = min(max(max_results * 2, max_results), 40)
-        sitemap_scan_deadline = time.monotonic() + 8
-        scanned_locations = 0
-        scanned_nested_sitemaps = 0
         keyword_pattern = re.compile(
-            r"(annual|sustain|esg|tax|investor|(?:^|/)ir(?:/|_|-)|financial|report|governance|risk|"
+            r"(annual|sustain|esg|tax|investor|ir/|financial|report|governance|risk|"
             r"年報|永續|稅|財報|投資人|關係|報告|公司治理|風險)",
             re.IGNORECASE,
         )
 
-        for domain in domains[:3]:
-            if time.monotonic() >= sitemap_scan_deadline:
-                break
+        for domain in domains[:5]:
             for sitemap_url in (
                 f"https://{domain}/sitemap.xml",
                 f"https://{domain}/sitemap_index.xml",
                 f"https://www.{domain}/sitemap.xml",
             ):
-                if time.monotonic() >= sitemap_scan_deadline:
-                    break
                 try:
                     response = self._cached_request(
                         "GET",
@@ -2887,16 +2861,7 @@ Requirements:
                     loc_value = (url_node.text or "").strip()
                     if not loc_value or loc_value in seen_urls:
                         continue
-                    scanned_locations += 1
-                    if scanned_locations > 250 or time.monotonic() >= sitemap_scan_deadline:
-                        return self._sort_company_sitemap_results(results, max_results)
                     if loc_value.lower().endswith(".xml"):
-                        sitemap_score_hint = self._score_company_sitemap_url(loc_value)
-                        if sitemap_score_hint < 1.0:
-                            continue
-                        scanned_nested_sitemaps += 1
-                        if scanned_nested_sitemaps > 8:
-                            continue
                         try:
                             inner_response = self._cached_request(
                                 "GET",
@@ -2912,13 +2877,7 @@ Requirements:
                             inner_value = (inner_loc.text or "").strip()
                             if not inner_value or inner_value in seen_urls:
                                 continue
-                            scanned_locations += 1
-                            if scanned_locations > 250 or time.monotonic() >= sitemap_scan_deadline:
-                                return self._sort_company_sitemap_results(results, max_results)
                             if not keyword_pattern.search(inner_value):
-                                continue
-                            sitemap_score = self._score_company_sitemap_url(inner_value)
-                            if sitemap_score < 1.0:
                                 continue
                             seen_urls.add(inner_value)
                             results.append({
@@ -2931,15 +2890,12 @@ Requirements:
                                 ),
                                 "source": "company_sitemap",
                                 "published_at": None,
-                                "relevance_score": sitemap_score,
+                                "relevance_score": 0.0,
                             })
-                            if len(results) >= scan_limit:
-                                return self._sort_company_sitemap_results(results, max_results)
+                            if len(results) >= max_results:
+                                return results
                         continue
                     if not keyword_pattern.search(loc_value):
-                        continue
-                    sitemap_score = self._score_company_sitemap_url(loc_value)
-                    if sitemap_score < 1.0:
                         continue
                     seen_urls.add(loc_value)
                     results.append({
@@ -2952,87 +2908,13 @@ Requirements:
                         ),
                         "source": "company_sitemap",
                         "published_at": None,
-                        "relevance_score": sitemap_score,
+                        "relevance_score": 0.0,
                     })
-                    if len(results) >= scan_limit:
-                        return self._sort_company_sitemap_results(results, max_results)
+                    if len(results) >= max_results:
+                        return results
                 if results:
                     break
-        return self._sort_company_sitemap_results(results, max_results)
-
-    def _sort_company_sitemap_results(self, results: List[Dict], max_results: int) -> List[Dict]:
-        return sorted(results, key=lambda item: item.get("relevance_score", 0.0), reverse=True)[:max_results]
-
-    def _score_company_sitemap_url(self, url: str) -> float:
-        lowered = unquote(url or "").lower()
-        score = 0.0
-        high_value_terms = (
-            "investor",
-            "/ir",
-            "ir_",
-            "annual",
-            "financial",
-            "report",
-            "attachment",
-            "governance",
-            "sustainability",
-            "esg",
-            "tax",
-            "shareholder",
-            "stock",
-            "subsidiar",
-            "related-party",
-            "related%20party",
-            "財報",
-            "年報",
-            "投資",
-            "公司治理",
-            "永續",
-            "稅",
-            "關係",
-        )
-        strong_terms = (
-            "investor",
-            "annual_report",
-            "annual-report",
-            "financial-report",
-            "ir_report",
-            "attachment",
-            "corporate_governance",
-            "sustainability",
-            ".pdf",
-        )
-        product_terms = (
-            "/store",
-            "asus-store",
-            "/shop",
-            "/laptops",
-            "/motherboards",
-            "/monitors",
-            "/graphics-cards",
-            "/phones",
-            "/networking",
-            "/accessories",
-            "/support",
-            "/product",
-            "/review",
-            "gaming",
-            "tuf",
-            "rog",
-            "zenbook",
-            "vivobook",
-            "chromebook",
-            "router",
-            "mouse",
-            "keyboard",
-            "where-to-buy",
-        )
-        score += sum(1.2 for term in high_value_terms if term in lowered)
-        score += sum(1.8 for term in strong_terms if term in lowered)
-        product_penalty = sum(1.4 for term in product_terms if term in lowered)
-        if product_penalty and score < 5.0:
-            score -= product_penalty
-        return score
+        return results
 
     def _safe_search_call(self, search_func, *args) -> List[Dict]:
         source_name = getattr(search_func, "__name__", "unknown")
@@ -3077,10 +2959,9 @@ Requirements:
         if not tasks:
             return False
         max_workers = min(self.PARALLEL_FETCH_WORKERS, max(2, len(tasks)))
-        executor = ThreadPoolExecutor(max_workers=max_workers)
-        futures = [executor.submit(self._safe_search_call, fn, *args) for fn, args in tasks]
-        try:
-            for future in as_completed(futures, timeout=self.PARALLEL_SEARCH_BATCH_TIMEOUT_SECONDS):
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(self._safe_search_call, fn, *args) for fn, args in tasks]
+            for future in as_completed(futures):
                 try:
                     items = future.result() or []
                 except Exception:
@@ -3090,14 +2971,7 @@ Requirements:
                 if len(merged) >= candidate_limit:
                     for pending in futures:
                         pending.cancel()
-                    executor.shutdown(wait=False, cancel_futures=True)
                     return True
-        except TimeoutError:
-            for pending in futures:
-                pending.cancel()
-            executor.shutdown(wait=False, cancel_futures=True)
-            return len(merged) >= candidate_limit
-        executor.shutdown(wait=False, cancel_futures=True)
         return False
 
     def _dedup_by_title_similarity(self, results: List[Dict], threshold: float = 0.7) -> List[Dict]:
@@ -3190,57 +3064,7 @@ Requirements:
 
     def _should_skip_result_url(self, url: str) -> bool:
         domain = self._extract_domain(url)
-        return domain in self.LOW_SIGNAL_DOMAINS or self._is_low_value_product_url(url)
-
-    def _is_low_value_product_url(self, url: str) -> bool:
-        lowered = unquote(url or "").lower()
-        high_value_terms = (
-            "investor",
-            "annual",
-            "financial",
-            "report",
-            "governance",
-            "sustainability-report",
-            "esg-report",
-            "tax",
-            "shareholder",
-            "subsidiar",
-            "related-party",
-            "attachment",
-            ".pdf",
-            "財報",
-            "年報",
-            "投資",
-            "公司治理",
-            "稅",
-        )
-        product_terms = (
-            "/store",
-            "asus-store",
-            "/shop",
-            "/support",
-            "/download",
-            "/laptops",
-            "/motherboards",
-            "/monitors",
-            "/graphics-cards",
-            "/phones",
-            "/networking",
-            "/accessories",
-            "/product",
-            "/review",
-            "gaming",
-            "tuf",
-            "rog",
-            "zenbook",
-            "vivobook",
-            "chromebook",
-            "router",
-            "mouse",
-            "keyboard",
-            "where-to-buy",
-        )
-        return any(term in lowered for term in product_terms) and not any(term in lowered for term in high_value_terms)
+        return domain in self.LOW_SIGNAL_DOMAINS
 
     def _fetch_google_news_feed(self, url: str, max_results: int, source_name: str) -> List[Dict]:
         response = self._cached_request("GET", url)
@@ -3398,13 +3222,6 @@ Requirements:
                 result["relevance_score"] = min(result["relevance_score"], 6.4)
             if event_intent and result.get("source") == "official_domain_seed" and tax_event_hits == 0:
                 result["relevance_score"] = min(result["relevance_score"], 4.8)
-            if (
-                result.get("source") in {"sec_edgar", "edinet_jp", "dart_kr"}
-                and has_company_focus
-                and alias_hits == 0
-                and domain_alias_bonus == 0
-            ):
-                result["relevance_score"] = min(result["relevance_score"], 0.5)
 
         return sorted(results, key=lambda item: item["relevance_score"], reverse=True)
 
